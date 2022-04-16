@@ -1,3 +1,6 @@
+mod graph;
+mod glthread;
+
 #[cfg(test)]
 mod tests {
     #[test]
