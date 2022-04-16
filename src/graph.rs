@@ -1,22 +1,21 @@
 use std::alloc::{alloc, Layout};
-use std::borrow::Borrow;
-use std::collections::linked_list::LinkedList;
 use memoffset::offset_of;
 use crate::glthread::{*};
 
+const TOPOLOGY_NAME: usize = 16;
 const NODE_NAME_SIZE: usize = 16;
 const IF_NAME_SIZE: usize = 16;
 const MAX_INTF_PER_NODE: usize = 10;
 
 #[repr(C)]
 pub struct Graph {
-    topology_name: [u8; 30],
+    topology_name: [u8; TOPOLOGY_NAME],
     node_list: GLThread,
 }
 
 impl Graph {
-    pub fn new(topology_name: &[u8; 30]) -> *mut Self {
-        let layout = Layout::new::<Graph>();
+    pub fn new(topology_name: &[u8; TOPOLOGY_NAME]) -> Self {
+/*        let layout = Layout::new::<Graph>();
         unsafe {
             let p = alloc(layout) as *mut Self;
             let graph = &mut *p;
@@ -24,39 +23,98 @@ impl Graph {
             std::ptr::write(&mut graph.node_list,
                             GLThread{ left: std::ptr::null_mut(), right: std::ptr::null_mut() });
             p
+        }*/
+        Self{
+            topology_name: *topology_name,
+            node_list: GLThread{ left: std::ptr::null_mut(), right: std::ptr::null_mut() }
         }
     }
 
-    pub fn add_node(&mut self, node_name: &[u8; NODE_NAME_SIZE]) {
+    pub fn add_node(&mut self, node_name: &[u8; NODE_NAME_SIZE]) -> *mut Node{
         let new_node = Node::new(node_name);
         unsafe{
             let curr_glthread = &self.node_list as *const _ as *mut GLThread;
             let new_glthread = &(*new_node).graph_glue as *const _ as *mut GLThread;
             glthread_add_next(curr_glthread, new_glthread);
         }
+        new_node
+    }
+
+    pub fn insert_link(&self,
+                       node_src: *mut Node,
+                       node_des: *mut Node,
+                       if_src_name: &[u8; IF_NAME_SIZE],
+                       if_des_name: &[u8; IF_NAME_SIZE],
+                       cost: usize)
+    {
+        let boxed_if_src = Box::new(Interface{
+            if_name: *if_src_name,
+            att_node: node_src,
+            link: std::ptr::null_mut(),
+        });
+        let if_src =  Box::into_raw(boxed_if_src);
+        let boxed_if_des = Box::new(Interface{
+            if_name: *if_des_name,
+            att_node: node_des,
+            link: std::ptr::null_mut(),
+        });
+        let if_des = Box::into_raw(boxed_if_des);
+        let boxed_link = Box::new(Link{
+            if_src,
+            if_des,
+            cost,
+        });
+        let link = Box::into_raw(boxed_link);
+        unsafe {
+            (*if_src).link = link;
+            (*if_des).link = link;
+
+            if let Some(index) = (*node_src).get_node_intf_available_slot(){
+                (*node_src).interfaces[index] = if_src;
+            }
+            if let Some(index) = (*node_des).get_node_intf_available_slot(){
+                (*node_des).interfaces[index] = if_des;
+            }
+        }
+
     }
 
     #[inline]
-    pub unsafe fn get_node_by_node_name(&self, node_name: &[u8; NODE_NAME_SIZE]) -> *mut Node {
+    pub  fn get_node_by_node_name(&self, node_name: &[u8; NODE_NAME_SIZE]) -> *mut Node {
         let base = &self.node_list.right as *const _ as *mut GLThread;
 
         while !base.is_null() {
-            let node = graph_glue_to_node(base);
-            if (*node).node_name == *node_name {
-                return node;
+            unsafe {
+                let node = graph_glue_to_node(base);
+                if (*node).node_name == *node_name {
+                    return node;
+                }
             }
         }
         std::ptr::null_mut()
     }
+
+    pub fn dump_graph(&self) {
+        let mut base = self.node_list.right;
+        while !base.is_null() {
+            unsafe{
+                let node = graph_glue_to_node(base);
+                (*node).dump_node();
+                base = (*base).right;
+            }
+        }
+    }
+
 }
 
-
+#[repr(C)]
 pub struct Interface {
     if_name: [u8; IF_NAME_SIZE],
     att_node: *mut Node,
     link: *mut Link,
 }
 
+#[repr(C)]
 pub struct Link {
     if_src: *mut Interface,
     if_des: *mut Interface,
@@ -100,6 +158,23 @@ impl Node{
         }
         std::ptr::null_mut()
     }
+
+    pub fn dump_node(&self) {
+        println!("Node name = {}", std::str::from_utf8(&self.node_name).unwrap());
+        unsafe{
+            for i in 0..MAX_INTF_PER_NODE {
+                if self.interfaces[i].is_null() { break; }
+                let intf = self.interfaces[i];
+                println!("Interface Name = {}\n\tNbr Node {}, Local Node : {}, cost = {}",
+                         std::str::from_utf8(&(*intf).if_name).unwrap(),
+                         std::str::from_utf8(&(*get_nbr_node(intf)).node_name).unwrap(),
+                         std::str::from_utf8(&(*(*intf).att_node).node_name).unwrap(),
+                         (*(*intf).link).cost
+                );
+            }
+        }
+
+    }
 }
 
 #[inline]
@@ -124,7 +199,7 @@ pub unsafe fn graph_glue_to_node(glthread: *mut GLThread) -> *mut Node {
 #[cfg(test)]
 mod test {
     use crate::glthread::GLThread;
-    use crate::graph::{graph_glue_to_node, Node};
+    use crate::graph::{Graph, graph_glue_to_node, Node};
 
     #[test]
     fn test_graph_glue_to_node() {
@@ -135,5 +210,23 @@ mod test {
             let res = graph_glue_to_node(gp);
             assert_eq!(*name,(*res).node_name);
         }
+    }
+
+    #[test]
+    fn test_graph() {
+        let topology_anme = b"###test_graph###";
+
+        let mut graph = Graph::new(topology_anme);
+        let node1 = graph.add_node(b"###test_node1###");
+        let node2 = graph.add_node(b"###test_node2###");
+        let node3 = graph.add_node(b"###test_node3###");
+        let node4 = graph.add_node(b"###test_node4###");
+        let node5 = graph.add_node(b"###test_node5###");
+        graph.insert_link(node1, node2,b"###node1_eth1###",b"###node2_eth2###", 1);
+        graph.insert_link(node2, node3,b"###node2_eth3###",b"###node3_eth4###", 1);
+        graph.insert_link(node3, node4,b"###node3_eth5###",b"###node4_eth6###", 1);
+        graph.insert_link(node4, node5,b"###node4_eth7###",b"###node5_eth8###", 1);
+        graph.insert_link(node5, node1,b"###node5_eth9###",b"###node1_eth0###", 1);
+        graph.dump_graph();
     }
 }

@@ -35,7 +35,7 @@ pub unsafe fn glthread_add_before(curr_glthread: *mut GLThread, new_glthread: *m
 pub unsafe fn remove_glthread(curr_glthread: *mut GLThread) {
 
     if !(*curr_glthread).left.is_null() {
-        (*(*curr_glthread).left).left = (*curr_glthread).right;
+        (*(*curr_glthread).left).right = (*curr_glthread).right;
     }
     if !(*curr_glthread).right.is_null() {
         (*(*curr_glthread).right).left = (*curr_glthread).left;
@@ -52,7 +52,7 @@ pub unsafe fn glthrea_add_last(base_glthread: *mut GLThread, new_glthread: *mut 
     (*tmp).right = new_glthread;
 }
 
-pub unsafe fn get_glthread_list_count(base_glthread: *mut GLThread) -> usize{
+pub unsafe fn get_glthread_list_count(base_glthread: *mut GLThread) -> usize {
     let mut count = 1;
     let mut tmp = base_glthread;
     while !tmp.is_null() {
@@ -62,9 +62,7 @@ pub unsafe fn get_glthread_list_count(base_glthread: *mut GLThread) -> usize{
     count
 }
 
-pub unsafe fn glthread_priority_insert(
-    base_glthread: *mut GLThread,
-    glthread: *mut GLThread ) {
+#[cfg(test)]
+mod test{
 
 }
-
