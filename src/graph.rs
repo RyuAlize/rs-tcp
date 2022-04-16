@@ -1,6 +1,7 @@
 use std::alloc::{alloc, Layout};
 use memoffset::offset_of;
 use crate::glthread::{*};
+use crate::net::{*};
 
 const TOPOLOGY_NAME: usize = 16;
 const NODE_NAME_SIZE: usize = 16;
@@ -51,12 +52,14 @@ impl Graph {
             if_name: *if_src_name,
             att_node: node_src,
             link: std::ptr::null_mut(),
+            intf_prope: InterfaceProperty::init(),
         });
         let if_src =  Box::into_raw(boxed_if_src);
         let boxed_if_des = Box::new(Interface{
             if_name: *if_des_name,
             att_node: node_des,
             link: std::ptr::null_mut(),
+            intf_prope: InterfaceProperty::init(),
         });
         let if_des = Box::into_raw(boxed_if_des);
         let boxed_link = Box::new(Link{
@@ -112,6 +115,7 @@ pub struct Interface {
     if_name: [u8; IF_NAME_SIZE],
     att_node: *mut Node,
     link: *mut Link,
+    intf_prope:InterfaceProperty,
 }
 
 #[repr(C)]
@@ -125,6 +129,7 @@ pub struct Node {
     node_name: [u8; NODE_NAME_SIZE],
     interfaces: [*mut Interface; MAX_INTF_PER_NODE],
     graph_glue: GLThread,
+    node_propre: NetWorkNodeProperty,
 }
 
 impl Node{
@@ -137,6 +142,7 @@ impl Node{
             std::ptr::write(&mut node.interfaces, [std::ptr::null_mut(); MAX_INTF_PER_NODE]);
             std::ptr::write(&mut node.graph_glue,
                             GLThread{ left: std::ptr::null_mut(), right: std::ptr::null_mut() });
+            std::ptr::write(&mut node.node_propre, NetWorkNodeProperty::init());
             p
         }
     }

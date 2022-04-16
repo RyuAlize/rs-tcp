@@ -1,5 +1,6 @@
 mod graph;
 mod glthread;
+mod net;
 
 #[cfg(test)]
 mod tests {
