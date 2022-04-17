@@ -4,8 +4,8 @@ const MAX_VLAN_MEMBERHIP: usize = 10;
 
 pub struct IPV4([u8;4]);
 pub struct IPV6([u8;16]);
-pub struct IP([u8;4]);
-pub struct MAC([u8;6]);
+pub struct IP(pub [u8;4]);
+pub struct MAC(pub [u8;6]);
 
 impl Display for IP {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
@@ -89,7 +89,7 @@ impl NetWorkNodeProperty {
     pub fn dump(&self) {
         println!("\t node flags : {}", self.flags);
         if self.is_lb_addr_config {
-            print!("\t lo addr : {}/32", self.loopback_addr);
+            println!("\t lo addr : {}/32", self.loopback_addr);
         }
     }
 }
@@ -144,11 +144,6 @@ impl InterfaceProperty {
     pub fn set_interface_ip_address(&mut self, ip: IP, mask: u8){
         self.ip_addr = ip;
         self.mask = mask;
-    }
-
-    #[inline]
-    pub fn unset_interface_ip_address(&mut self) {
-        todo!()
     }
 
     #[inline]

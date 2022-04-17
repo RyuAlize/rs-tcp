@@ -71,7 +71,8 @@ impl Graph {
         unsafe {
             (*if_src).link = link;
             (*if_des).link = link;
-
+            (*if_src).set_mac_address();
+            (*if_des).set_mac_address();
             if let Some(index) = (*node_src).get_node_intf_available_slot(){
                 (*node_src).interfaces[index] = if_src;
             }
@@ -201,7 +202,7 @@ impl Node{
     }
 
     #[inline]
-    pub fn set_ip_address(&mut self, ip: IP) {
+    pub fn set_loopback_address(&mut self, ip: IP) {
         self.node_proprs.set_loopback_address(ip);
         self.node_proprs.lb_addr_config(true);
 
@@ -209,7 +210,9 @@ impl Node{
 
     pub fn set_intf_ip_address(&mut self,  if_name: &[u8; IF_NAME_SIZE], ip: IP, mask: u8) {
         let interface = self.get_node_if_by_name(if_name);
-
+        unsafe {
+            (*interface).set_ip_address(ip, mask);
+        }
     }
 }
 
@@ -236,6 +239,7 @@ pub unsafe fn graph_glue_to_node(glthread: *mut GLThread) -> *mut Node {
 mod test {
     use crate::glthread::GLThread;
     use crate::graph::{Graph, graph_glue_to_node, Node};
+    use crate::net::IP;
 
     #[test]
     fn test_graph_glue_to_node() {
@@ -263,6 +267,28 @@ mod test {
         graph.insert_link(node3, node4,b"###node3_eth5###",b"###node4_eth6###", 1);
         graph.insert_link(node4, node5,b"###node4_eth7###",b"###node5_eth8###", 1);
         graph.insert_link(node5, node1,b"###node5_eth9###",b"###node1_eth0###", 1);
+
+        unsafe{
+            (*node1).set_loopback_address(IP([127,0,0,1]));
+            (*node1).set_intf_ip_address(b"###node1_eth1###", IP([192,168,0,1]), 24);
+            (*node1).set_intf_ip_address(b"###node1_eth0###", IP([192,168,0,0]), 24);
+
+            (*node2).set_loopback_address(IP([127,0,0,1]));
+            (*node2).set_intf_ip_address(b"###node2_eth2###", IP([192,168,0,2]), 24);
+            (*node2).set_intf_ip_address(b"###node2_eth3###", IP([192,168,0,3]), 24);
+
+            (*node3).set_loopback_address(IP([127,0,0,1]));
+            (*node3).set_intf_ip_address(b"###node3_eth4###", IP([192,168,0,4]), 24);
+            (*node3).set_intf_ip_address(b"###node3_eth5###", IP([192,168,0,5]), 24);
+
+            (*node4).set_loopback_address(IP([127,0,0,1]));
+            (*node4).set_intf_ip_address(b"###node4_eth6###", IP([192,168,0,6]), 24);
+            (*node4).set_intf_ip_address(b"###node4_eth7###", IP([192,168,0,7]), 24);
+
+            (*node5).set_loopback_address(IP([127,0,0,1]));
+            (*node5).set_intf_ip_address(b"###node5_eth8###", IP([192,168,0,8]), 24);
+            (*node5).set_intf_ip_address(b"###node5_eth9###", IP([192,168,0,9]), 24);
+        }
         graph.dump_graph();
     }
 }
