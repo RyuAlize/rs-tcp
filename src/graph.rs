@@ -52,14 +52,14 @@ impl Graph {
             if_name: *if_src_name,
             att_node: node_src,
             link: std::ptr::null_mut(),
-            intf_prope: InterfaceProperty::init(),
+            intf_props: InterfaceProperty::init(),
         });
         let if_src =  Box::into_raw(boxed_if_src);
         let boxed_if_des = Box::new(Interface{
             if_name: *if_des_name,
             att_node: node_des,
             link: std::ptr::null_mut(),
-            intf_prope: InterfaceProperty::init(),
+            intf_props: InterfaceProperty::init(),
         });
         let if_des = Box::into_raw(boxed_if_des);
         let boxed_link = Box::new(Link{
@@ -115,7 +115,24 @@ pub struct Interface {
     if_name: [u8; IF_NAME_SIZE],
     att_node: *mut Node,
     link: *mut Link,
-    intf_prope:InterfaceProperty,
+    intf_props:InterfaceProperty,
+}
+
+impl Interface {
+    pub fn set_mac_address(&mut self) {
+        if self.att_node.is_null() {return;}
+        let mut hash_code_val = 0;
+        unsafe {
+            hash_code_val = hash_code(&(*self.att_node).node_name, NODE_NAME_SIZE);
+            hash_code_val *= hash_code(&self.if_name, IF_NAME_SIZE);
+        }
+        self.intf_props.set_interface_mac_address(hash_code_to_mac(hash_code_val));
+    }
+
+    pub fn set_ip_address(&mut self, ip: IP, mask: u8) {
+        self.intf_props.set_interface_ip_address(ip, mask);
+        self.intf_props.ipadd_config(true);
+    }
 }
 
 #[repr(C)]
@@ -129,7 +146,7 @@ pub struct Node {
     node_name: [u8; NODE_NAME_SIZE],
     interfaces: [*mut Interface; MAX_INTF_PER_NODE],
     graph_glue: GLThread,
-    node_propre: NetWorkNodeProperty,
+    node_proprs: NetWorkNodeProperty,
 }
 
 impl Node{
@@ -142,7 +159,7 @@ impl Node{
             std::ptr::write(&mut node.interfaces, [std::ptr::null_mut(); MAX_INTF_PER_NODE]);
             std::ptr::write(&mut node.graph_glue,
                             GLThread{ left: std::ptr::null_mut(), right: std::ptr::null_mut() });
-            std::ptr::write(&mut node.node_propre, NetWorkNodeProperty::init());
+            std::ptr::write(&mut node.node_proprs, NetWorkNodeProperty::init());
             p
         }
     }
@@ -167,6 +184,7 @@ impl Node{
 
     pub fn dump_node(&self) {
         println!("Node name = {}", std::str::from_utf8(&self.node_name).unwrap());
+        self.node_proprs.dump();
         unsafe{
             for i in 0..MAX_INTF_PER_NODE {
                 if self.interfaces[i].is_null() { break; }
@@ -177,8 +195,20 @@ impl Node{
                          std::str::from_utf8(&(*(*intf).att_node).node_name).unwrap(),
                          (*(*intf).link).cost
                 );
+                (*intf).intf_props.dump();
             }
         }
+    }
+
+    #[inline]
+    pub fn set_ip_address(&mut self, ip: IP) {
+        self.node_proprs.set_loopback_address(ip);
+        self.node_proprs.lb_addr_config(true);
+
+    }
+
+    pub fn set_intf_ip_address(&mut self,  if_name: &[u8; IF_NAME_SIZE], ip: IP, mask: u8) {
+        let interface = self.get_node_if_by_name(if_name);
 
     }
 }
@@ -194,7 +224,7 @@ pub unsafe fn get_nbr_node(interface: *mut Interface) -> *mut Node {
     std::ptr::null_mut()
 }
 
-
+#[inline]
 pub unsafe fn graph_glue_to_node(glthread: *mut GLThread) -> *mut Node {
     let offset = offset_of!(Node, graph_glue);
     let node_addr = (glthread as usize) - offset;
