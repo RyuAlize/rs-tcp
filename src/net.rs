@@ -4,12 +4,15 @@ const MAX_VLAN_MEMBERHIP: usize = 10;
 
 pub struct IPV4([u8;4]);
 pub struct IPV6([u8;16]);
+
+#[derive(Clone, Copy)]
 pub struct IP(pub [u8;4]);
+#[derive(Clone, Copy)]
 pub struct MAC(pub [u8;6]);
 
 impl Display for IP {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{:02x}:{:02x}:{:02x}:{:02x}",
+        write!(f, "{:02x}.{:02x}.{:02x}.{:02x}",
                self.0[0],self.0[1],self.0[2],self.0[3])
     }
 }
@@ -66,8 +69,8 @@ impl NetWorkNodeProperty {
     }
 
     #[inline]
-    pub fn get_loopback_address(&self) -> &IP {
-        &self.loopback_addr
+    pub fn get_loopback_address(&self) -> IP {
+        self.loopback_addr
     }
 
     #[inline]
@@ -121,13 +124,18 @@ impl InterfaceProperty {
     }
 
     #[inline]
-    pub fn get_mac(&self) -> &MAC {
-        &self.mac_addr
+    pub fn get_mac(&self) -> MAC {
+        self.mac_addr
     }
 
     #[inline]
-    pub fn get_ip(&self) -> &IP {
-        &self.ip_addr
+    pub fn get_ip(&self) -> IP {
+        self.ip_addr
+    }
+
+    #[inline]
+    pub fn get_mask(&self) -> u8 {
+        self.mask
     }
 
     #[inline]
@@ -152,7 +160,7 @@ impl InterfaceProperty {
     }
 
     #[inline]
-    pub fn ipadd_config(&mut self, flag:bool) {
+    pub fn set_ipadd_config(&mut self, flag:bool) {
         self.is_ipaddr_config = flag;
     }
 
@@ -175,7 +183,6 @@ impl InterfaceProperty {
     }
 }
 
-
 pub fn hash_code(bytes: &[u8], size: usize) -> usize {
     let mut value = 0;
     for i in 0..size {
@@ -195,11 +202,68 @@ pub fn hash_code_to_mac(value: usize) -> MAC {
     MAC([b0,b1,b2,b3,b4,b5])
 }
 
+///Get ip address prefix
+pub fn apply_mask(ip: IP, mask: u8) -> [u8; 4] {
+    assert!(mask <= 32);
+    let (n, m) = (mask as usize/ 8 ,  8- mask % 8);
+    let mut bytes = ip.0;
+    if n < bytes.len() {
+        bytes[n] &= !((1<<m) - 1);
+        for i in n+1..bytes.len() {
+            bytes[i] = 0;
+        }
+    }
+    bytes
+}
+
+///  Convert an ip address in string form (A.B.C.D format)
+///  into its equivalent 32-bit integer form in a given base
+pub fn convert_str_ip_radix(ip: &str, radix: u32) -> Option<IP> {
+    let mut bytes = [0u8; 4];
+    for (index, number) in ip.split('.').enumerate() {
+        bytes[index] = u8::from_str_radix(number, radix).unwrap();
+    }
+    Some(IP(bytes))
+}
+
+///Convert an ip address in integer form into its equivalent dot decimal form (A.B.C.D format)
+pub fn convert_ip_to_str(ip: IP) -> String {
+    format!("{:02x}.{:02x}.{:02x}.{:02x}",ip.0[0],ip.0[1],ip.0[2],ip.0[3])
+}
+
+#[inline]
+pub fn is_broadcast_mac_address(mac_addr: &MAC) -> bool {
+    mac_addr.0.eq(&[255,255,255,255,255,255])
+}
+
 
 #[cfg(test)]
 mod test {
+    use crate::net::{apply_mask, convert_ip_to_str, convert_str_ip_radix, IP};
+
     #[test]
     fn test_ip() {
+        let ip =IP([127,0,0,255]);
+        assert_eq!([127,0,0,0], apply_mask(ip, 21));
 
+        let ip2 =IP([127,0,0,255]);
+        assert_eq!([127,0,0,224], apply_mask(ip2, 27));
+
+        let ip3 =IP([127,0,0,255]);
+        assert_eq!([127,0,0,240], apply_mask(ip3, 28));
+
+        let ip4 =IP([127,0,0,255]);
+        assert_eq!([127,0,0,248], apply_mask(ip4, 29));
+
+        let ip5 =IP([127,0,0,255]);
+        assert_eq!([127,0,0,252], apply_mask(ip5, 30));
+
+        let ip6 =IP([127,0,0,255]);
+        assert_eq!([127,0,0,254], apply_mask(ip6, 31));
+
+        let ip7 =IP([127,0,0,255]);
+        assert_eq!([127,0,0,255], apply_mask(ip7, 32));
+
+        assert_eq!(IP([192,168,10,112]).0,  convert_str_ip_radix(convert_ip_to_str(IP([192,168,10,112])).as_str(), 16).unwrap().0)
     }
 }

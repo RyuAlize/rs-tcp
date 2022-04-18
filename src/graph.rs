@@ -1,21 +1,29 @@
 use std::alloc::{alloc, Layout};
+use std::net::{ SocketAddr};
+use std::sync::atomic::{AtomicPtr, Ordering};
+use std::thread;
+use std::time::Duration;
 use memoffset::offset_of;
+use mio::{net::UdpSocket, Events, Interest, Poll, Token};
 use crate::glthread::{*};
 use crate::net::{*};
+use crate::error::{Error, Result};
 
-const TOPOLOGY_NAME: usize = 16;
+
+
+const TOPOLOGY_NAME_SIZE: usize = 16;
 const NODE_NAME_SIZE: usize = 16;
 const IF_NAME_SIZE: usize = 16;
 const MAX_INTF_PER_NODE: usize = 10;
 
 #[repr(C)]
 pub struct Graph {
-    topology_name: [u8; TOPOLOGY_NAME],
+    topology_name: [u8; TOPOLOGY_NAME_SIZE],
     node_list: GLThread,
 }
 
 impl Graph {
-    pub fn new(topology_name: &[u8; TOPOLOGY_NAME]) -> Self {
+    pub fn new(topology_name: &[u8; TOPOLOGY_NAME_SIZE]) -> Self {
 /*        let layout = Layout::new::<Graph>();
         unsafe {
             let p = alloc(layout) as *mut Self;
@@ -98,6 +106,42 @@ impl Graph {
         std::ptr::null_mut()
     }
 
+    pub fn start_pkt_receiver_thread(&self){
+        let mut base = AtomicPtr::from(self.node_list.right);
+
+        let thread = thread::spawn( move || {
+            let mut poll = Poll::new().unwrap();
+            let mut events = Events::with_capacity(128);
+            let registry = poll.registry();
+            let mut node_list = vec![];
+            unsafe {
+                let glthread = base.load(Ordering::Relaxed);
+                let mut i = 0;
+                while ! glthread.is_null() {
+                    let node = graph_glue_to_node(glthread);
+                    let socket = &mut *(*node).udp_sock;
+                    node_list.push(node);
+                    registry.register(socket,
+                                      Token(i),
+                                      Interest::READABLE).unwrap();
+                }
+
+                i += 1;
+            }
+            loop {
+                poll.poll(&mut events, None);
+                for event in events.iter() {
+                    let mut buf = vec![];
+                    unsafe {
+                        if let Ok(size) = (*(*node_list[event.token().0]).udp_sock).recv(&mut buf) {
+                            (*node_list[event.token().0]).pkt_receive(&buf, size);
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     pub fn dump_graph(&self) {
         let mut base = self.node_list.right;
         while !base.is_null() {
@@ -132,7 +176,7 @@ impl Interface {
 
     pub fn set_ip_address(&mut self, ip: IP, mask: u8) {
         self.intf_props.set_interface_ip_address(ip, mask);
-        self.intf_props.ipadd_config(true);
+        self.intf_props.set_ipadd_config(true);
     }
 }
 
@@ -142,11 +186,14 @@ pub struct Link {
     if_des: *mut Interface,
     cost: usize,
 }
+
 #[repr(C)]
 pub struct Node {
     node_name: [u8; NODE_NAME_SIZE],
     interfaces: [*mut Interface; MAX_INTF_PER_NODE],
     graph_glue: GLThread,
+    udp_port_number: usize,
+    udp_sock: *mut UdpSocket,
     node_proprs: NetWorkNodeProperty,
 }
 
@@ -160,6 +207,8 @@ impl Node{
             std::ptr::write(&mut node.interfaces, [std::ptr::null_mut(); MAX_INTF_PER_NODE]);
             std::ptr::write(&mut node.graph_glue,
                             GLThread{ left: std::ptr::null_mut(), right: std::ptr::null_mut() });
+            std::ptr::write(&mut node.udp_port_number, 0);
+            std::ptr::write(&mut node.udp_sock, std::ptr::null_mut());
             std::ptr::write(&mut node.node_proprs, NetWorkNodeProperty::init());
             p
         }
@@ -194,8 +243,7 @@ impl Node{
                          std::str::from_utf8(&(*intf).if_name).unwrap(),
                          std::str::from_utf8(&(*get_nbr_node(intf)).node_name).unwrap(),
                          std::str::from_utf8(&(*(*intf).att_node).node_name).unwrap(),
-                         (*(*intf).link).cost
-                );
+                         (*(*intf).link).cost);
                 (*intf).intf_props.dump();
             }
         }
@@ -213,6 +261,57 @@ impl Node{
         unsafe {
             (*interface).set_ip_address(ip, mask);
         }
+    }
+
+    pub fn get_matching_subnet_interface(&self, ip: IP) -> *mut Interface {
+        for i in 0..MAX_INTF_PER_NODE {
+            let interface = self.interfaces[i];
+            if interface.is_null(){break;}
+
+            unsafe{
+                if !(*interface).intf_props.is_l3_mode() {continue;}
+                let mask = (*interface).intf_props.get_mask();
+                let network_number = apply_mask(ip, mask);
+                if network_number == apply_mask((*interface).intf_props.get_ip(), mask){
+                    return interface;
+                }
+            }
+        }
+        std::ptr::null_mut()
+    }
+
+    pub fn init_udp_sock(&mut self, udp_port_number: usize) -> Result<()> {
+        self.udp_port_number = udp_port_number;
+        let udp_sock = UdpSocket::bind(
+            format!("{}:{}",self.node_proprs.get_loopback_address(),
+                    udp_port_number).parse()?)?;
+        self.udp_sock = &udp_sock as * const _ as *mut UdpSocket;
+        Ok(())
+    }
+
+    pub fn send_pkt_to(&self, pkt_data: &[u8], des_addr:SocketAddr ) -> Result<()> {
+        if self.udp_sock.is_null() {
+            return Err(Error::SocketNotBindError);
+        }
+        unsafe{ (*self.udp_sock).send_to(pkt_data, des_addr)?; }
+
+        Ok(())
+    }
+
+    pub fn pkt_receive(&self, buf: &[u8], size: usize) -> Result<()> {
+        assert!(size > IF_NAME_SIZE);
+        let mut if_name = [0u8; IF_NAME_SIZE];
+        for (i, b) in buf.iter().take(IF_NAME_SIZE).enumerate() {
+            if_name[i] = b.to_owned();
+        }
+
+        let interface = self.get_node_if_by_name(&if_name);
+        if !interface.is_null() {
+            let data = buf[..size].to_owned();
+            todo!()
+        }
+
+        Ok(())
     }
 }
 
@@ -248,7 +347,7 @@ mod test {
         unsafe {
             let gp = &(*node).graph_glue as * const _ as *mut GLThread;
             let res = graph_glue_to_node(gp);
-            assert_eq!(*name,(*res).node_name);
+            assert_eq!(*name, (*res).node_name);
         }
     }
 

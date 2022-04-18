@@ -1,8 +1,12 @@
+use std::sync::atomic::AtomicPtr;
 #[repr(C)]
+#[derive(Clone)]
 pub struct GLThread{
     pub left: *mut GLThread,
     pub right: *mut GLThread,
 }
+
+unsafe impl Send for GLThread{}
 
 pub fn init_glthread() ->  GLThread {
     GLThread {
