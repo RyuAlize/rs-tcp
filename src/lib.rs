@@ -2,7 +2,6 @@ mod graph;
 mod glthread;
 mod net;
 mod error;
-mod commandparser;
 
 
 #[cfg(test)]

@@ -1,5 +1,7 @@
 use std::alloc::{alloc, Layout};
+use std::cell::{Cell, RefCell};
 use std::net::{ SocketAddr};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::thread;
 use std::time::Duration;
@@ -107,39 +109,43 @@ impl Graph {
     }
 
     pub fn start_pkt_receiver_thread(&self){
-        let mut base = AtomicPtr::from(self.node_list.right);
+        let base = AtomicPtr::from(self.node_list.right);
+        thread::spawn( move || {
+              let mut poll = Poll::new().unwrap();
+              let mut events = Events::with_capacity(128);
+              let registry = poll.registry();
+              let mut node_list = vec![];
+              let mut glthread = base.into_inner();
+              unsafe {
+                  let mut i = 0;
+                  while ! glthread.is_null() {
+                      let node = graph_glue_to_node(glthread);
+                      if (*node).udp_sock.is_some() {
+                          let socket = &mut *(*node).udp_sock.as_mut().unwrap();
+                          node_list.push(node);
+                          registry.register(socket,
+                                            Token(i),
+                                            Interest::READABLE).unwrap();
+                          i += 1;
+                      }
+                      glthread = (*glthread).right;
+                  }
+              }
+                loop {
+                    poll.poll(&mut events, None);
 
-        let thread = thread::spawn( move || {
-            let mut poll = Poll::new().unwrap();
-            let mut events = Events::with_capacity(128);
-            let registry = poll.registry();
-            let mut node_list = vec![];
-            unsafe {
-                let glthread = base.load(Ordering::Relaxed);
-                let mut i = 0;
-                while ! glthread.is_null() {
-                    let node = graph_glue_to_node(glthread);
-                    let socket = &mut *(*node).udp_sock;
-                    node_list.push(node);
-                    registry.register(socket,
-                                      Token(i),
-                                      Interest::READABLE).unwrap();
-                }
-
-                i += 1;
-            }
-            loop {
-                poll.poll(&mut events, None);
-                for event in events.iter() {
-                    let mut buf = vec![];
-                    unsafe {
-                        if let Ok(size) = (*(*node_list[event.token().0]).udp_sock).recv(&mut buf) {
-                            (*node_list[event.token().0]).pkt_receive(&buf, size);
+                    for event in events.iter() {
+                        let mut buf = vec![0;1024];
+                        unsafe {
+                            if let Ok(size) = (*node_list[event.token().0]).udp_sock.as_ref().unwrap().recv(&mut buf) {
+                                (*node_list[event.token().0]).pkt_receive(&buf, size);
+                                let socket = (*node_list[event.token().0]).udp_sock.as_mut().unwrap();
+                                poll.registry().reregister(socket, event.token(), Interest::READABLE);
+                            }
                         }
                     }
                 }
-            }
-        });
+            });
     }
 
     pub fn dump_graph(&self) {
@@ -193,7 +199,7 @@ pub struct Node {
     interfaces: [*mut Interface; MAX_INTF_PER_NODE],
     graph_glue: GLThread,
     udp_port_number: usize,
-    udp_sock: *mut UdpSocket,
+    udp_sock: Option<UdpSocket>,
     node_proprs: NetWorkNodeProperty,
 }
 
@@ -208,7 +214,7 @@ impl Node{
             std::ptr::write(&mut node.graph_glue,
                             GLThread{ left: std::ptr::null_mut(), right: std::ptr::null_mut() });
             std::ptr::write(&mut node.udp_port_number, 0);
-            std::ptr::write(&mut node.udp_sock, std::ptr::null_mut());
+            std::ptr::write(&mut node.udp_sock, None);
             std::ptr::write(&mut node.node_proprs, NetWorkNodeProperty::init());
             p
         }
@@ -282,19 +288,22 @@ impl Node{
 
     pub fn init_udp_sock(&mut self, udp_port_number: usize) -> Result<()> {
         self.udp_port_number = udp_port_number;
-        let udp_sock = UdpSocket::bind(
-            format!("{}:{}",self.node_proprs.get_loopback_address(),
-                    udp_port_number).parse()?)?;
-        self.udp_sock = &udp_sock as * const _ as *mut UdpSocket;
+        let addr = format!("{}:{}",self.node_proprs.get_loopback_address(),
+                           udp_port_number);
+        println!("{}", addr);
+        let udp_sock = UdpSocket::bind(addr.parse()?)?;
+        self.udp_sock = Some(udp_sock);
         Ok(())
     }
 
     pub fn send_pkt_to(&self, pkt_data: &[u8], des_addr:SocketAddr ) -> Result<()> {
-        if self.udp_sock.is_null() {
+        if self.udp_sock.is_none() {
             return Err(Error::SocketNotBindError);
         }
-        unsafe{ (*self.udp_sock).send_to(pkt_data, des_addr)?; }
+        let socket = self.udp_sock.as_ref().unwrap();
 
+        socket.send_to(pkt_data, des_addr)?;
+        println!("send..");
         Ok(())
     }
 
@@ -307,8 +316,8 @@ impl Node{
 
         let interface = self.get_node_if_by_name(&if_name);
         if !interface.is_null() {
-            let data = buf[..size].to_owned();
-            todo!()
+            let data = buf[IF_NAME_SIZE..size].to_owned();
+            println!("{} recived data: {:?}",std::str::from_utf8(&self.node_name).unwrap(),data);
         }
 
         Ok(())
@@ -336,9 +345,10 @@ pub unsafe fn graph_glue_to_node(glthread: *mut GLThread) -> *mut Node {
 
 #[cfg(test)]
 mod test {
-    use crate::glthread::GLThread;
-    use crate::graph::{Graph, graph_glue_to_node, Node};
-    use crate::net::IP;
+    use std::borrow::{Borrow, BorrowMut};
+    use std::thread::sleep;
+    use mio::net::{TcpListener, TcpStream};
+    use super::*;
 
     #[test]
     fn test_graph_glue_to_node() {
@@ -352,7 +362,7 @@ mod test {
     }
 
     #[test]
-    fn test_graph() {
+    fn test_graph()-> Result<()> {
         let topology_anme = b"###test_graph###";
 
         let mut graph = Graph::new(topology_anme);
@@ -387,7 +397,20 @@ mod test {
             (*node5).set_loopback_address(IP([127,0,0,1]));
             (*node5).set_intf_ip_address(b"###node5_eth8###", IP([192,168,0,8]), 24);
             (*node5).set_intf_ip_address(b"###node5_eth9###", IP([192,168,0,9]), 24);
+            (*node1).init_udp_sock(3456);
+            (*node2).init_udp_sock(40014);
+
+            graph.start_pkt_receiver_thread();
+
+            for i in 0..10 {
+                let data = b"###node2_eth2###12";
+                (*node1).send_pkt_to(data, "127.0.0.1:40014".parse().unwrap());
+                sleep(Duration::from_millis(100));
+            }
+
         }
-        graph.dump_graph();
+        Ok(())
+        //graph.dump_graph();
     }
+
 }
