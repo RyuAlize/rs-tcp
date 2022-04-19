@@ -17,6 +17,7 @@ const TOPOLOGY_NAME_SIZE: usize = 16;
 const NODE_NAME_SIZE: usize = 16;
 const IF_NAME_SIZE: usize = 16;
 const MAX_INTF_PER_NODE: usize = 10;
+const MAX_PACKET_BUFFER_SIZE: usize = 1024;
 
 #[repr(C)]
 pub struct Graph {
@@ -170,6 +171,17 @@ pub struct Interface {
 }
 
 impl Interface {
+    #[inline]
+    pub unsafe fn get_nbr_node(&self) -> *mut Node {
+        if !self.link.is_null() {
+            match std::ptr::eq(self, (*self.link).if_src) {
+                true => {return (*(*self.link).if_des).att_node;},
+                false => {return (*(*self.link).if_src).att_node;},
+            }
+        }
+        std::ptr::null_mut()
+    }
+
     pub fn set_mac_address(&mut self) {
         if self.att_node.is_null() {return;}
         let mut hash_code_val = 0;
@@ -183,6 +195,22 @@ impl Interface {
     pub fn set_ip_address(&mut self, ip: IP, mask: u8) {
         self.intf_props.set_interface_ip_address(ip, mask);
         self.intf_props.set_ipadd_config(true);
+    }
+
+    pub fn pkt_send_out(&self, data:&[u8]) -> Result<()>{
+        unsafe {
+            let nbr_node = self.get_nbr_node();
+            let des_port_number = (*nbr_node).udp_port_number;
+            let other_interface = match std::ptr::eq(self, (*self.link).if_des) {
+                true => (*self.link).if_src,
+                false => (*self.link).if_des,
+            };
+            let mut bytes = (*other_interface).if_name.clone().to_vec();
+            bytes.extend(data);
+            let sock = UdpSocket::bind("127.0.0.1:0".parse()?)?;
+            sock.send_to(&bytes, format!("127.0.0.1:{}", des_port_number).parse()?)?;
+        }
+        Ok(())
     }
 }
 
@@ -296,14 +324,20 @@ impl Node{
         Ok(())
     }
 
-    pub fn send_pkt_to(&self, pkt_data: &[u8], des_addr:SocketAddr ) -> Result<()> {
-        if self.udp_sock.is_none() {
+    pub fn send_pkt_flood(&self, pkt_data: &[u8]) -> Result<()> {
+        /*if self.udp_sock.is_none() {
             return Err(Error::SocketNotBindError);
         }
         let socket = self.udp_sock.as_ref().unwrap();
 
         socket.send_to(pkt_data, des_addr)?;
-        println!("send..");
+        println!("send..");*/
+        for i in 0..MAX_INTF_PER_NODE {
+            if self.interfaces[i].is_null() {break;}
+            unsafe {
+                (*self.interfaces[i]).pkt_send_out(pkt_data)?;
+            }
+        }
         Ok(())
     }
 
@@ -399,12 +433,14 @@ mod test {
             (*node5).set_intf_ip_address(b"###node5_eth9###", IP([192,168,0,9]), 24);
             (*node1).init_udp_sock(3456);
             (*node2).init_udp_sock(40014);
+            (*node5).init_udp_sock(40013);
 
             graph.start_pkt_receiver_thread();
 
             for i in 0..10 {
-                let data = b"###node2_eth2###12";
-                (*node1).send_pkt_to(data, "127.0.0.1:40014".parse().unwrap());
+                let data = b"12";
+
+                (*node1).send_pkt_flood(data);
                 sleep(Duration::from_millis(100));
             }
 
