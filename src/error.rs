@@ -1,3 +1,4 @@
+use std::str::Utf8Error;
 use thiserror::Error;
 #[derive(Error, Debug)]
 pub enum Error {
@@ -8,7 +9,13 @@ pub enum Error {
     SocketNotBindError,
 
     #[error("invalid socket address")]
-    SocketAddrParseErrpr(#[from] std::net::AddrParseError)
+    SocketAddrParseError(#[from] std::net::AddrParseError),
+
+    #[error("{}", 0)]
+    ARPError(String),
+
+    #[error("utf8 error")]
+    Utf8Error(#[from] Utf8Error),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

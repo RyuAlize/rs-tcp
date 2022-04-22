@@ -1,23 +1,21 @@
 use std::alloc::{alloc, Layout};
-use std::cell::{Cell, RefCell};
 use std::net::{ SocketAddr};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::thread;
 use std::time::Duration;
 use memoffset::offset_of;
 use mio::{net::UdpSocket, Events, Interest, Poll, Token};
-use crate::glthread::{*};
-use crate::net::{*};
+use crate::topograph::glthread::{*};
+use crate::topograph::net::{*};
 use crate::error::{Error, Result};
 
 
 
-const TOPOLOGY_NAME_SIZE: usize = 16;
-const NODE_NAME_SIZE: usize = 16;
-const IF_NAME_SIZE: usize = 16;
-const MAX_INTF_PER_NODE: usize = 10;
-const MAX_PACKET_BUFFER_SIZE: usize = 1024;
+pub const TOPOLOGY_NAME_SIZE: usize = 16;
+pub const NODE_NAME_SIZE: usize = 16;
+pub const IF_NAME_SIZE: usize = 16;
+pub const MAX_INTF_PER_NODE: usize = 10;
+pub const MAX_PACKET_BUFFER_SIZE: usize = 1024;
 
 #[repr(C)]
 pub struct Graph {
@@ -182,6 +180,15 @@ impl Interface {
         std::ptr::null_mut()
     }
 
+    #[inline]
+    pub fn is_l3_mode(&self) -> bool {
+        self.intf_props.is_l3_mode()
+    }
+
+    #[inline]
+    pub fn l2_mode(&self) -> &InterfaceMode {
+        self.intf_props.interface_mode()
+    }
     pub fn set_mac_address(&mut self) {
         if self.att_node.is_null() {return;}
         let mut hash_code_val = 0;
@@ -192,9 +199,18 @@ impl Interface {
         self.intf_props.set_interface_mac_address(hash_code_to_mac(hash_code_val));
     }
 
+    #[inline]
+    pub fn get_mac_address(&self) -> MAC{
+        self.intf_props.get_mac()
+    }
+
     pub fn set_ip_address(&mut self, ip: IP, mask: u8) {
         self.intf_props.set_interface_ip_address(ip, mask);
         self.intf_props.set_ipadd_config(true);
+    }
+    #[inline]
+    pub fn get_ip_address(&self) -> IP {
+        self.intf_props.get_ip()
     }
 
     pub fn pkt_send_out(&self, data:&[u8]) -> Result<()>{
@@ -253,6 +269,12 @@ impl Node{
     }
 
     #[inline]
+    pub fn get_name(&self) -> Result<String> {
+        let name = std::str::from_utf8(&self.node_name)?;
+        Ok(name.to_owned())
+    }
+
+    #[inline]
     pub fn get_node_if_by_name(&self, if_name: &[u8; IF_NAME_SIZE]) -> *mut Interface {
         for interface in self.interfaces {
             if !interface.is_null() {
@@ -297,7 +319,7 @@ impl Node{
         }
     }
 
-    pub fn get_matching_subnet_interface(&self, ip: IP) -> *mut Interface {
+    pub fn get_matching_subnet_interface(&'i self, ip: IP) -> Option<&'i Interface> {
         for i in 0..MAX_INTF_PER_NODE {
             let interface = self.interfaces[i];
             if interface.is_null(){break;}
@@ -307,11 +329,11 @@ impl Node{
                 let mask = (*interface).intf_props.get_mask();
                 let network_number = apply_mask(ip, mask);
                 if network_number == apply_mask((*interface).intf_props.get_ip(), mask){
-                    return interface;
+                    return Some(&*interface);
                 }
             }
         }
-        std::ptr::null_mut()
+        None
     }
 
     pub fn init_udp_sock(&mut self, udp_port_number: usize) -> Result<()> {
@@ -325,13 +347,6 @@ impl Node{
     }
 
     pub fn send_pkt_flood(&self, pkt_data: &[u8]) -> Result<()> {
-        /*if self.udp_sock.is_none() {
-            return Err(Error::SocketNotBindError);
-        }
-        let socket = self.udp_sock.as_ref().unwrap();
-
-        socket.send_to(pkt_data, des_addr)?;
-        println!("send..");*/
         for i in 0..MAX_INTF_PER_NODE {
             if self.interfaces[i].is_null() {break;}
             unsafe {
