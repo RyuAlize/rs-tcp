@@ -1,5 +1,5 @@
 use std::fmt::{Display, Formatter};
-
+use crate::data_link_layer::arp::{ARPTable};
 const MAX_VLAN_MEMBERHIP: usize = 10;
 
 pub struct IPV4([u8;4]);
@@ -40,7 +40,7 @@ impl Display for InterfaceMode {
     }
 }
 
-pub struct ARPTable;
+
 pub struct MACTable;
 pub struct RTTable;
 
@@ -60,7 +60,7 @@ impl NetWorkNodeProperty {
     pub fn init() -> NetWorkNodeProperty{
         NetWorkNodeProperty{
             flags: 0,
-            arp_table: ARPTable,
+            arp_table: ARPTable::init(),
             mac_table: MACTable,
             rt_table: RTTable,
             is_lb_addr_config: false,

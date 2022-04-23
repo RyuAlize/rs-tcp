@@ -1,4 +1,4 @@
-mod arp;
+pub mod arp;
 use crate::topograph::graph::{Interface, Node};
 use crate::topograph::net::{InterfaceMode, MAC};
 

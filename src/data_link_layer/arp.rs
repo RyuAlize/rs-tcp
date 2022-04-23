@@ -39,6 +39,16 @@ pub struct ARPEntry {
     arg_pending_list: GLThread,
 }
 
+impl PartialEq for ARPEntry {
+    fn eq(&self, other: &Self) -> bool {
+        self.ip_addr.eq(&other.ip_addr)
+            && self.mac_addr.eq(&other.mac_addr)
+            && self.oif_name.eq(&other.oif_name)
+            && self.is_sane == other.is_sane
+            && self.is_sane == false
+    }
+}
+
 impl ARPEntry {
     pub fn delete(mut self) {
         unsafe{
@@ -85,9 +95,32 @@ impl ARPTable {
     }
 
     pub fn clear(&mut self) {
-
+        let mut base = self.arp_entries.right;
+        while !base.is_null() {
+            unsafe {
+                let arp_entry = Box::from_raw(arp_glue_to_arp_entry(base));
+                arp_entry.delete();
+                base = (*base).right;
+            }
+        }
     }
 
+    pub fn add_arp_entry(&mut self, arp_entry: &ARPEntry ) -> bool {
+        let old_entry = self.lookup(arp_entry.ip_addr);
+        if old_entry.is_none(){
+            unsafe {
+                glthread_add_next(
+                    &self.arp_entries as *const _ as *mut _,
+                    &arp_entry.arp_glue as *const _ as *mut _
+                );}
+            return true;
+        }
+        if old_entry.is_some() && old_entry.unwrap().eq(arp_entry) {
+            return false;
+        }
+
+        false
+    }
 }
 
 pub fn send_arp_broadcast_request(node: &Node, interface: &Interface, ip: IP) -> Result<()> {
