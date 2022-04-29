@@ -69,6 +69,11 @@ impl NetWorkNodeProperty {
     }
 
     #[inline]
+    pub fn get_arp_table(&mut self) -> &mut ARPTable {
+        &mut self.arp_table
+    }
+
+    #[inline]
     pub fn get_loopback_address(&self) -> &IP {
         &self.loopback_addr
     }

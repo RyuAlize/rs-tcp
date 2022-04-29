@@ -5,6 +5,7 @@ use std::thread;
 use std::time::Duration;
 use memoffset::offset_of;
 use mio::{net::UdpSocket, Events, Interest, Poll, Token};
+use crate::data_link_layer::arp::ARPTable;
 use crate::topograph::glthread::{*};
 use crate::topograph::net_util::{*};
 use crate::error::{Error, Result};
@@ -182,8 +183,22 @@ impl Interface {
         Err(Error::NeighborNodeNotFound)
     }
 
+    pub fn get_att_node(&self) -> Result<&Node> {
+        if self.att_node.is_null() {
+            return Err(Error::InterfaceNotAttNode);
+        }
+        else{
+            unsafe{return Ok(&*self.att_node);}
+        }
+    }
+
     pub fn get_if_name(&self) -> [u8; IF_NAME_SIZE] {
         self.if_name
+    }
+
+    pub fn get_if_name_str(&self) -> Result<String> {
+        let name = std::str::from_utf8(&self.if_name)?;
+        Ok(name.to_owned())
     }
 
     #[inline]
@@ -309,6 +324,11 @@ impl Node{
                 (*intf).intf_props.dump();
             }
         }
+    }
+
+    #[inline]
+    pub fn get_arp_table(&mut self) -> &mut ARPTable{
+        self.node_proprs.get_arp_table()
     }
 
     #[inline]

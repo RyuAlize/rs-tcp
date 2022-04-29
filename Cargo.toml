@@ -6,6 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+lazy_static = "1.4.0"
 memoffset = "0.6.5"
 mio = { version = "0.8.2", features = ["os-poll", "net"] }
 nom = "7.1.1"

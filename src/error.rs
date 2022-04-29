@@ -20,6 +20,8 @@ pub enum Error {
     #[error("dosen't find neighbor node")]
     NeighborNodeNotFound,
 
+    #[error("interface not attach node")]
+    InterfaceNotAttNode,
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
