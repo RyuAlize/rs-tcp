@@ -1,4 +1,4 @@
 pub mod glthread;
 pub mod graph;
-pub mod net;
-pub mod util;
+pub mod net_util;
+

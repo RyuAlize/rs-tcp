@@ -16,6 +16,10 @@ pub enum Error {
 
     #[error("utf8 error")]
     Utf8Error(#[from] Utf8Error),
+
+    #[error("dosen't find neighbor node")]
+    NeighborNodeNotFound,
+
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

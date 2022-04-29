@@ -6,7 +6,7 @@ use std::time::Duration;
 use memoffset::offset_of;
 use mio::{net::UdpSocket, Events, Interest, Poll, Token};
 use crate::topograph::glthread::{*};
-use crate::topograph::net::{*};
+use crate::topograph::net_util::{*};
 use crate::error::{Error, Result};
 
 
@@ -170,14 +170,20 @@ pub struct Interface {
 
 impl Interface {
     #[inline]
-    pub unsafe fn get_nbr_node(&self) -> *mut Node {
-        if !self.link.is_null() {
-            match std::ptr::eq(self, (*self.link).if_src) {
-                true => {return (*(*self.link).if_des).att_node;},
-                false => {return (*(*self.link).if_src).att_node;},
+    pub fn get_nbr_node(&self) ->  Result<&Node> {
+        unsafe {
+            if !self.link.is_null() {
+                match std::ptr::eq(self, (*self.link).if_src) {
+                    true => { return Ok(&*(*(*self.link).if_des).att_node); }
+                    false => { return Ok(&*(*(*self.link).if_src).att_node); }
+                }
             }
         }
-        std::ptr::null_mut()
+        Err(Error::NeighborNodeNotFound)
+    }
+
+    pub fn get_if_name(&self) -> [u8; IF_NAME_SIZE] {
+        self.if_name
     }
 
     #[inline]
@@ -215,8 +221,8 @@ impl Interface {
 
     pub fn pkt_send_out(&self, data:&[u8]) -> Result<()>{
         unsafe {
-            let nbr_node = self.get_nbr_node();
-            let des_port_number = (*nbr_node).udp_port_number;
+            let nbr_node = self.get_nbr_node()?;
+            let des_port_number = nbr_node.udp_port_number;
             let other_interface = match std::ptr::eq(self, (*self.link).if_des) {
                 true => (*self.link).if_src,
                 false => (*self.link).if_des,
@@ -355,6 +361,7 @@ impl Node{
         }
         Ok(())
     }
+
 
     pub fn pkt_receive(&self, buf: &[u8], size: usize) -> Result<()> {
         assert!(size > IF_NAME_SIZE);

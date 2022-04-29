@@ -8,4 +8,5 @@ edition = "2021"
 [dependencies]
 memoffset = "0.6.5"
 mio = { version = "0.8.2", features = ["os-poll", "net"] }
+nom = "7.1.1"
 thiserror = "1.0.30"

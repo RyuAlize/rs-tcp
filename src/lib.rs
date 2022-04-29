@@ -1,4 +1,5 @@
 #![feature(in_band_lifetimes)]
+#![feature(linked_list_remove)]
 
 mod error;
 mod topograph;

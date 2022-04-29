@@ -5,9 +5,9 @@ const MAX_VLAN_MEMBERHIP: usize = 10;
 pub struct IPV4([u8;4]);
 pub struct IPV6([u8;16]);
 
-#[derive(Default,PartialEq,Clone, Copy)]
+#[derive(Debug,Default,PartialEq,Clone, Copy)]
 pub struct IP(pub [u8;4]);
-#[derive(Default,PartialEq,Clone, Copy)]
+#[derive(Debug,Default,PartialEq,Clone, Copy)]
 pub struct MAC(pub [u8;6]);
 
 impl Display for IP {
@@ -239,7 +239,7 @@ pub fn is_broadcast_mac_address(mac_addr: &MAC) -> bool {
 
 #[cfg(test)]
 mod test {
-    use crate::topograph::net::{apply_mask, convert_ip_to_str, convert_str_ip_radix, IP};
+    use crate::topograph::net_util::{apply_mask, convert_ip_to_str, convert_str_ip_radix, IP};
 
     #[test]
     fn test_ip() {
