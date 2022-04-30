@@ -210,10 +210,13 @@ pub fn hash_code_to_mac(value: usize) -> MAC {
 ///Get ip address prefix
 pub fn apply_mask(ip: IP, mask: u8) -> [u8; 4] {
     assert!(mask <= 32);
-    let (n, m) = (mask as usize/ 8 ,  8- mask % 8);
+    let (n, mut m) = (mask as usize/ 8 ,  mask % 8);
     let mut bytes = ip.0;
     if n < bytes.len() {
-        bytes[n] &= !((1<<m) - 1);
+        match m == 0 {
+            false => bytes[n] &= !((1<<(8-m)) - 1),
+            true => bytes[n] = 0,
+        }
         for i in n+1..bytes.len() {
             bytes[i] = 0;
         }
@@ -248,6 +251,9 @@ mod test {
 
     #[test]
     fn test_ip() {
+        let ip0 = IP([192,168,0,1]);
+        assert_eq!([192,168,0,0], apply_mask(ip0, 24));
+
         let ip =IP([127,0,0,255]);
         assert_eq!([127,0,0,0], apply_mask(ip, 21));
 

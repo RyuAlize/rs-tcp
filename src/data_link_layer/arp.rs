@@ -6,11 +6,11 @@ use crate::error::{Result, Error};
 use super::*;
 use lazy_static::lazy_static;
 
-const ARP_BROAD_REQ: u16 = 1;
-const ARP_REPLY: u16 = 2;
-const ARP_MSG: u16 = 809;
+pub const ARP_BROAD_REQ: u16 = 1;
+pub const ARP_REPLY: u16 = 2;
+pub const ARP_MSG: u16 = 809;
 
-
+#[derive(Debug)]
 pub struct ARPHeader {
     hw_type: u16,        /*1 for ethernet cable*/
     proto_type: u16,     /*0x0800 for IPV4*/
@@ -26,14 +26,15 @@ pub struct ARPHeader {
 impl ToBytes for ARPHeader {
     fn to_bytes(self) -> Vec<u8> {
         let mut bytes = Vec::new();
-        bytes.extend(self.hw_type.to_be_bytes());
-        bytes.extend(self.proto_type.to_be_bytes());
-        bytes.extend(self.hw_addr_len.to_be_bytes());
-        bytes.extend(self.op_code.to_be_bytes());
-        bytes.extend(self.src_mac.0);
-        bytes.extend(self.src_ip.0);
-        bytes.extend(self.des_mac.0);
-        bytes.extend(self.des_ip.0);
+        bytes.extend_from_slice(&self.hw_type.to_be_bytes());
+        bytes.extend_from_slice(&self.proto_type.to_be_bytes());
+        bytes.extend_from_slice(&self.hw_addr_len.to_be_bytes());
+        bytes.extend_from_slice(&self.proto_addr_type.to_be_bytes());
+        bytes.extend_from_slice(&self.op_code.to_be_bytes());
+        bytes.extend_from_slice(&self.src_mac.0);
+        bytes.extend_from_slice(&self.src_ip.0);
+        bytes.extend_from_slice(&self.des_mac.0);
+        bytes.extend_from_slice(&self.des_ip.0);
 
         bytes
     }
@@ -63,6 +64,11 @@ impl ARPHeader{
             des_ip: IP(dst_ip.try_into().unwrap())
         })
     }
+
+    #[inline]
+    pub fn op_code(&self) -> u16{
+        self.op_code
+    }
 }
 
 pub struct ARPPendingEntry {
@@ -70,6 +76,7 @@ pub struct ARPPendingEntry {
     //arp_processing_fn:
 }
 
+#[derive(Debug)]
 pub struct ARPEntry {
     ip_addr: IP,
     mac_addr: MAC,
@@ -138,7 +145,7 @@ impl ARPTable {
         false
     }
 
-    pub fn update_from_arp_reply(&mut self, arp_hdr: ARPHeader, iif: &Interface) {
+    pub fn update_from_arp_reply(&mut self, arp_hdr: &ARPHeader, iif: &Interface) {
         assert!(arp_hdr.op_code == ARP_REPLY);
         let arp_entry = ARPEntry{
             ip_addr: arp_hdr.src_ip,
@@ -150,18 +157,18 @@ impl ARPTable {
     }
 
     pub fn dump_arp_table(&self) {
-        self.arp_entries.iter().map(|entry|{
+        for entry in self.arp_entries.iter() {
             println!("IP : {}, MAC : {}, OIF = {}, Is Sane:{}",
-                entry.ip_addr,
-                entry.mac_addr,
-                std::str::from_utf8(&entry.oif_name).unwrap(),
-                entry.is_sane
+                     entry.ip_addr,
+                     entry.mac_addr,
+                     std::str::from_utf8(&entry.oif_name).unwrap(),
+                     entry.is_sane
             );
-        });
+        }
     }
 }
 
-pub fn send_arp_broadcast_request(node: &Node, oif: &Interface, ip: IP) -> Result<()> {
+pub fn send_arp_broadcast_request(node: &Node, ip: IP) -> Result<()> {
     match node.get_matching_subnet_interface(ip) {
         None => {
             return Err(Error::ARPError(format!("Error : {} : \
@@ -186,8 +193,8 @@ pub fn send_arp_broadcast_request(node: &Node, oif: &Interface, ip: IP) -> Resul
                         hw_addr_len: 6,
                         proto_addr_type: 4,
                         op_code: ARP_BROAD_REQ,
-                        src_mac: oif.get_mac_address(),
-                        src_ip: oif.get_ip_address(),
+                        src_mac: interface.get_mac_address(),
+                        src_ip: interface.get_ip_address(),
                         des_mac: Default::default(),
                         des_ip: ip
                     };
@@ -200,7 +207,7 @@ pub fn send_arp_broadcast_request(node: &Node, oif: &Interface, ip: IP) -> Resul
     }
 }
 
-pub fn send_arp_eply_msg(ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeader, oif: &Interface) -> Result<()> {
+pub fn send_arp_reply_msg(ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeader, oif: &Interface) -> Result<()> {
 
     let arp_hdr_reply = ARPHeader{
         hw_type: 1,
@@ -209,7 +216,7 @@ pub fn send_arp_eply_msg(ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeade
         proto_addr_type: 4,
         op_code: ARP_REPLY,
         src_mac: oif.get_mac_address(),
-        src_ip: arp_hdr_in.src_ip,
+        src_ip: oif.get_ip_address(),
         des_mac: arp_hdr_in.src_mac,
         des_ip: arp_hdr_in.src_ip,
     };
@@ -219,16 +226,14 @@ pub fn send_arp_eply_msg(ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeade
     ethernet_hdr_reply.set_des_mac(arp_hdr_in.src_mac);
     ethernet_hdr_reply.set_src_mac(oif.get_mac_address());
     ethernet_hdr_reply.set_payload(arp_hdr_reply.to_bytes());
-
     oif.pkt_send_out(&ethernet_hdr_reply.to_bytes())
 }
 
-pub fn process_arp_broadcast_request(node: &Node, iif: &Interface, ethernet_bytes: &[u8]) -> Result<()> {
+pub fn process_arp_broadcast_request(node: &Node, iif: &Interface, ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeader) -> Result<()> {
     println!("ARP Broadcast msg recvd on interface {} of node {}",
              iif.get_if_name_str()?,
              iif.get_att_node()?.get_name()?);
-    let ethernet_hdr_in = EthernetHeader::from_bytes(ethernet_bytes)?;
-    let arp_hdr_in = ARPHeader::from_bytes(&ethernet_hdr_in.payload)?;
+
     if !iif.get_ip_address().eq(&arp_hdr_in.des_ip) {
         println!("{} : ARP Broadcast req msg dropped, Dst IP address {} \
             did not match with interface ip : {}",
@@ -237,17 +242,14 @@ pub fn process_arp_broadcast_request(node: &Node, iif: &Interface, ethernet_byte
             iif.get_ip_address());
         return Ok(());
     }
-    send_arp_eply_msg(&ethernet_hdr_in, &arp_hdr_in, iif)
-
-
+    send_arp_reply_msg(&ethernet_hdr_in, &arp_hdr_in, iif)
 }
 
-pub fn process_arp_reply_msg(node: &mut Node, iif: &Interface, ethernet_bytes: &[u8]) -> Result<()> {
+pub fn process_arp_reply_msg(node: &mut Node, iif: &Interface, ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeader) -> Result<()> {
     println!("ARP reply msg recvd on interface {} of node {}",
              iif.get_if_name_str()?,
              iif.get_att_node()?.get_name()?);
-    let ethernet_hdr_in = EthernetHeader::from_bytes(ethernet_bytes)?;
-    let arp_hdr_in = ARPHeader::from_bytes(&ethernet_hdr_in.payload)?;
+
     let arp_table = node.get_arp_table();
     arp_table.update_from_arp_reply(arp_hdr_in, iif);
 

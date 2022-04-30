@@ -1,12 +1,14 @@
 pub mod arp;
+
 use nom::{IResult, Err, bytes::complete::take};
 use nom::character::complete::u32;
-
+use arp::*;
 use crate::error::{Error, Result};
 use crate::topograph::{
     net_util::*,
     graph::*,
 };
+
 pub trait ToBytes {
     fn to_bytes(self) -> Vec<u8>;
 }
@@ -110,27 +112,55 @@ pub fn l2_frame_recv_qualify_on_interface(interface: &Interface,
 
     /* If interface is working in L3 mode, then accept the frame only when
      * its dst mac matches with receiving interface MAC*/
-    if interface.is_l3_mode() && interface.get_mac_address().eq(&ethernet_hdr.dst_mac){
+    if interface.get_mac_address().eq(&ethernet_hdr.dst_mac){
         return true;
     }
 
     /*If interface is working in L3 mode, then accept the frame with
     * broadcast MAC*/
-    if interface.is_l3_mode() && ethernet_hdr.is_broadcast_mac() {
+    if ethernet_hdr.is_broadcast_mac() {
         return true;
     }
 
     false
 }
 
-pub fn layer2_frame_recv(node: &Node, interface: &Interface, pkt: &[u8]) {
-
+pub fn layer2_frame_recv(node: &mut Node, interface: &Interface, pkt: &[u8]) -> Result<()> {
+    let ethernet_hdr = EthernetHeader::from_bytes(pkt)?;
+    match l2_frame_recv_qualify_on_interface(interface, &ethernet_hdr, 0) {
+        true =>{
+            println!("L2 Frame Accepted.");
+            match ethernet_hdr.eth_type {
+                ARP_MSG=>{
+                    let arp_hdr = ARPHeader::from_bytes(&ethernet_hdr.payload)?;
+                    match arp_hdr.op_code() {
+                        ARP_BROAD_REQ => {process_arp_broadcast_request(node,
+                                                                        interface,
+                                                                        &ethernet_hdr,
+                                                                        &arp_hdr)},
+                        ARP_REPLY => {process_arp_reply_msg(node,
+                                                            interface,
+                                                            &ethernet_hdr,
+                                                            &arp_hdr)},
+                        _ => unreachable!()
+                    }
+                },
+                _=>unreachable!(),
+            }
+        },
+        false => {
+            println!("L2 Frame Rejected.");
+            Ok(())
+        }
+    }
 }
 
 
 
 #[cfg(test)]
 mod test{
+    use std::thread::sleep;
+    use std::time::Duration;
     use super::*;
     #[test]
     fn test_ethernet_hdr() -> Result<()>{
@@ -145,6 +175,51 @@ mod test{
         println!("{:?}", bytes);
         let hdr = EthernetHeader::from_bytes(&bytes)?;
         println!("{:?}", hdr);
+        Ok(())
+    }
+
+    #[test]
+    fn test_arp() -> Result<()> {
+        let topology_anme = b"   test_graph   ";
+        let mut graph = Graph::new(topology_anme);
+        let node1 = graph.add_node(b"   test_node1   ");
+        let node2 = graph.add_node(b"   test_node2   ");
+        let node3 = graph.add_node(b"   test_node3   ");
+
+        graph.insert_link(node1, node2,b"      eth0/0    ",b"      eth0/1    ", 1);
+        graph.insert_link(node2, node3,b"      eth0/2    ",b"      eth0/3    ", 1);
+        graph.insert_link(node3, node1,b"      eth0/4    ",b"      eth0/5    ", 1);
+
+        unsafe{
+            (*node1).set_loopback_address(IP([127,0,0,1]));
+            (*node1).set_intf_ip_address(b"      eth0/5    ", IP([194,168,0,15]), 24);
+            (*node1).set_intf_ip_address(b"      eth0/0    ", IP([192,168,0,10]), 24);
+
+            (*node2).set_loopback_address(IP([127,0,0,1]));
+            (*node2).set_intf_ip_address(b"      eth0/1    ", IP([192,168,0,11]), 24);
+            (*node2).set_intf_ip_address(b"      eth0/2    ", IP([193,168,0,12]), 24);
+
+            (*node3).set_loopback_address(IP([127,0,0,1]));
+            (*node3).set_intf_ip_address(b"      eth0/3    ", IP([193,168,0,13]), 24);
+            (*node3).set_intf_ip_address(b"      eth0/4    ", IP([194,168,0,14]), 24);
+
+            (*node1).init_udp_sock(3456);
+            (*node2).init_udp_sock(40014);
+            (*node3).init_udp_sock(40013);
+
+            //graph.dump_graph();
+
+            graph.start_pkt_receiver_thread();
+            send_arp_broadcast_request(&(*node1), IP([192,168,0,11]))?;
+            sleep(Duration::from_millis(3000));
+            (*node1).get_arp_table().dump_arp_table();
+            send_arp_broadcast_request(&(*node1), IP([194,168,0,14]))?;
+            sleep(Duration::from_millis(3000));
+            (*node1).get_arp_table().dump_arp_table();
+        }
+
+
+
         Ok(())
     }
 }

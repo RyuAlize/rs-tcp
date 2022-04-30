@@ -6,6 +6,7 @@ use std::time::Duration;
 use memoffset::offset_of;
 use mio::{net::UdpSocket, Events, Interest, Poll, Token};
 use crate::data_link_layer::arp::ARPTable;
+use crate::data_link_layer::layer2_frame_recv;
 use crate::topograph::glthread::{*};
 use crate::topograph::net_util::{*};
 use crate::error::{Error, Result};
@@ -133,7 +134,6 @@ impl Graph {
               }
                 loop {
                     poll.poll(&mut events, None);
-
                     for event in events.iter() {
                         let mut buf = vec![0;1024];
                         unsafe {
@@ -345,7 +345,7 @@ impl Node{
         }
     }
 
-    pub fn get_matching_subnet_interface(&'i self, ip: IP) -> Option<&'i Interface> {
+    pub fn get_matching_subnet_interface<'i>(&'i self, ip: IP) -> Option<&'i Interface> {
         for i in 0..MAX_INTF_PER_NODE {
             let interface = self.interfaces[i];
             if interface.is_null(){break;}
@@ -366,7 +366,6 @@ impl Node{
         self.udp_port_number = udp_port_number;
         let addr = format!("{}:{}",self.node_proprs.get_loopback_address(),
                            udp_port_number);
-        println!("{}", addr);
         let udp_sock = UdpSocket::bind(addr.parse()?)?;
         self.udp_sock = Some(udp_sock);
         Ok(())
@@ -383,7 +382,7 @@ impl Node{
     }
 
 
-    pub fn pkt_receive(&self, buf: &[u8], size: usize) -> Result<()> {
+    pub fn pkt_receive(&mut self, buf: &[u8], size: usize) -> Result<()> {
         assert!(size > IF_NAME_SIZE);
         let mut if_name = [0u8; IF_NAME_SIZE];
         for (i, b) in buf.iter().take(IF_NAME_SIZE).enumerate() {
@@ -393,7 +392,9 @@ impl Node{
         let interface = self.get_node_if_by_name(&if_name);
         if !interface.is_null() {
             let data = buf[IF_NAME_SIZE..size].to_owned();
-            println!("{} recived data: {:?}",std::str::from_utf8(&self.node_name).unwrap(),data);
+            unsafe{
+                layer2_frame_recv(self, &*interface, &data)?;
+            }
         }
 
         Ok(())

@@ -4,6 +4,7 @@
 mod error;
 mod topograph;
 mod data_link_layer;
+mod packet;
 
 
 #[cfg(test)]
