@@ -1,4 +1,3 @@
-
 pub trait Packet {
     /// Return a slice to the packet header.
     fn header(&self) -> &[u8] {

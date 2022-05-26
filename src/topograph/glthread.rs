@@ -1,33 +1,31 @@
 use std::sync::atomic::AtomicPtr;
+
 #[repr(C)]
 #[derive(Clone)]
-pub struct GLThread{
+pub struct GLThread {
     pub left: *mut GLThread,
     pub right: *mut GLThread,
 }
 
-unsafe impl Send for GLThread{}
+unsafe impl Send for GLThread {}
 
-pub fn init_glthread() ->  GLThread {
+pub fn init_glthread() -> GLThread {
     GLThread {
         left: std::ptr::null_mut(),
-        right: std::ptr::null_mut() ,
+        right: std::ptr::null_mut(),
     }
 }
 
 pub unsafe fn glthread_add_next(curr_glthread: *mut GLThread, new_glthread: *mut GLThread) {
-
     if !(*curr_glthread).right.is_null() {
         let mut tmp = (*curr_glthread).right;
         (*tmp).left = new_glthread;
         (*new_glthread).right = tmp;
     }
     (*curr_glthread).right = new_glthread;
-
 }
 
 pub unsafe fn glthread_add_before(curr_glthread: *mut GLThread, new_glthread: *mut GLThread) {
-
     if !(*curr_glthread).left.is_null() {
         let mut tmp = (*curr_glthread).left;
         (*tmp).right = new_glthread;
@@ -37,7 +35,6 @@ pub unsafe fn glthread_add_before(curr_glthread: *mut GLThread, new_glthread: *m
 }
 
 pub unsafe fn remove_glthread(curr_glthread: *mut GLThread) {
-
     if !(*curr_glthread).left.is_null() {
         (*(*curr_glthread).left).right = (*curr_glthread).right;
     }
@@ -49,7 +46,7 @@ pub unsafe fn remove_glthread(curr_glthread: *mut GLThread) {
 }
 
 pub unsafe fn glthrea_add_last(base_glthread: *mut GLThread, new_glthread: *mut GLThread) {
-    let mut tmp =  base_glthread;
+    let mut tmp = base_glthread;
     while !(*tmp).right.is_null() {
         tmp = (*tmp).right;
     }
@@ -67,6 +64,4 @@ pub unsafe fn get_glthread_list_count(base_glthread: *mut GLThread) -> usize {
 }
 
 #[cfg(test)]
-mod test{
-
-}
+mod test {}

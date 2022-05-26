@@ -1,5 +1,7 @@
 use std::str::Utf8Error;
+
 use thiserror::Error;
+
 #[derive(Error, Debug)]
 pub enum Error {
     #[error("IO error")]
@@ -22,6 +24,11 @@ pub enum Error {
 
     #[error("interface not attach node")]
     InterfaceNotAttNode,
+
+    #[error("interface not found")]
+    InterfaceNotFound,
+    #[error("{}", 0)]
+    InterfaceModeError(String),
 }
 
 pub type Result<T> = std::result::Result<T, Error>;

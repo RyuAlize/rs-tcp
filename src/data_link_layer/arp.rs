@@ -1,10 +1,12 @@
 use std::collections::LinkedList;
 use std::fmt::{Display, Formatter};
+
+use lazy_static::lazy_static;
 use memoffset::offset_of;
 
-use crate::error::{Result, Error};
+use crate::error::{Error, Result};
+
 use super::*;
-use lazy_static::lazy_static;
 
 pub const ARP_BROAD_REQ: u16 = 1;
 pub const ARP_REPLY: u16 = 2;
@@ -12,11 +14,16 @@ pub const ARP_MSG: u16 = 809;
 
 #[derive(Debug)]
 pub struct ARPHeader {
-    hw_type: u16,        /*1 for ethernet cable*/
-    proto_type: u16,     /*0x0800 for IPV4*/
-    hw_addr_len: u8,     /*6 for MAC*/
-    proto_addr_type:u8,  /*4 for IPV4*/
-    op_code: u16,        /*req or reply*/
+    hw_type: u16,
+    /*1 for ethernet cable*/
+    proto_type: u16,
+    /*0x0800 for IPV4*/
+    hw_addr_len: u8,
+    /*6 for MAC*/
+    proto_addr_type: u8,
+    /*4 for IPV4*/
+    op_code: u16,
+    /*req or reply*/
     src_mac: MAC,
     src_ip: IP,
     des_mac: MAC,
@@ -38,10 +45,9 @@ impl ToBytes for ARPHeader {
 
         bytes
     }
-
 }
 
-impl ARPHeader{
+impl ARPHeader {
     pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
         let (bytes, hw_type) = take2(bytes).unwrap();
         let (bytes, proto_type) = take2(bytes).unwrap();
@@ -52,7 +58,7 @@ impl ARPHeader{
         let (bytes, src_ip) = take4(bytes).unwrap();
         let (bytes, dst_mac) = take6(bytes).unwrap();
         let (bytes, dst_ip) = take4(bytes).unwrap();
-        Ok(Self{
+        Ok(Self {
             hw_type: u16::from_be_bytes(hw_type.try_into().unwrap()),
             proto_type: u16::from_be_bytes(proto_type.try_into().unwrap()),
             hw_addr_len: u8::from_be_bytes(hw_addr_len.try_into().unwrap()),
@@ -61,12 +67,12 @@ impl ARPHeader{
             src_mac: MAC(src_mac.try_into().unwrap()),
             src_ip: IP(src_ip.try_into().unwrap()),
             des_mac: MAC(dst_mac.try_into().unwrap()),
-            des_ip: IP(dst_ip.try_into().unwrap())
+            des_ip: IP(dst_ip.try_into().unwrap()),
         })
     }
 
     #[inline]
-    pub fn op_code(&self) -> u16{
+    pub fn op_code(&self) -> u16 {
         self.op_code
     }
 }
@@ -100,13 +106,9 @@ impl ARPEntry {
         self.delete_pending_entries();
     }
 
-    pub fn delete_pending_entries(&mut self) {
+    pub fn delete_pending_entries(&mut self) {}
 
-    }
-
-    pub fn add_pending_entry(&mut self, pkt: &[u8]) {
-
-    }
+    pub fn add_pending_entry(&mut self, pkt: &[u8]) {}
 }
 
 pub struct ARPTable {
@@ -115,7 +117,7 @@ pub struct ARPTable {
 
 impl ARPTable {
     pub fn init() -> Self {
-        Self{
+        Self {
             arp_entries: LinkedList::new(),
         }
     }
@@ -128,11 +130,11 @@ impl ARPTable {
         self.arp_entries.clear();
     }
 
-    pub fn add_arp_entry(&mut self, arp_entry: ARPEntry ) -> bool {
+    pub fn add_arp_entry(&mut self, arp_entry: ARPEntry) -> bool {
         let index = self.arp_entries.iter()
             .position(|entry| entry.ip_addr.eq(&arp_entry.ip_addr));
 
-        if index.is_none(){
+        if index.is_none() {
             self.arp_entries.push_back(arp_entry);
             return true;
         }
@@ -147,16 +149,16 @@ impl ARPTable {
 
     pub fn update_from_arp_reply(&mut self, arp_hdr: &ARPHeader, iif: &Interface) {
         assert!(arp_hdr.op_code == ARP_REPLY);
-        let arp_entry = ARPEntry{
+        let arp_entry = ARPEntry {
             ip_addr: arp_hdr.src_ip,
             mac_addr: arp_hdr.src_mac,
-            oif_name: iif.get_if_name(),
-            is_sane: false
+            oif_name: iif.get_if_name().clone(),
+            is_sane: false,
         };
         self.add_arp_entry(arp_entry);
     }
 
-    pub fn dump_arp_table(&self) {
+    pub fn dump(&self) {
         for entry in self.arp_entries.iter() {
             println!("IP : {}, MAC : {}, OIF = {}, Is Sane:{}",
                      entry.ip_addr,
@@ -186,7 +188,7 @@ pub fn send_arp_broadcast_request(node: &Node, ip: IP) -> Result<()> {
                     ethernet_header.set_des_mac(MAC([0xff,0xff,0xff,0xff,0xff,0xff]));
                     ethernet_header.set_src_mac(interface.get_mac_address());
                     ethernet_header.set_type(ARP_MSG);
-                    
+
                     let arp_hdr = ARPHeader{
                         hw_type: 1,
                         proto_type: 0x0800,
@@ -207,7 +209,9 @@ pub fn send_arp_broadcast_request(node: &Node, ip: IP) -> Result<()> {
     }
 }
 
-pub fn send_arp_reply_msg(ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeader, oif: &Interface) -> Result<()> {
+pub fn send_arp_reply_msg(ethernet_hdr_in: &EthernetHeader,
+                          arp_hdr_in: &ARPHeader,
+                          oif: &Interface) -> Result<()> {
 
     let arp_hdr_reply = ARPHeader{
         hw_type: 1,
@@ -229,7 +233,10 @@ pub fn send_arp_reply_msg(ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHead
     oif.pkt_send_out(&ethernet_hdr_reply.to_bytes())
 }
 
-pub fn process_arp_broadcast_request(node: &Node, iif: &Interface, ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeader) -> Result<()> {
+pub fn process_arp_broadcast_request(node: &Node,
+                                     iif: &Interface,
+                                     ethernet_hdr_in: &EthernetHeader,
+                                     arp_hdr_in: &ARPHeader) -> Result<()> {
     println!("ARP Broadcast msg recvd on interface {} of node {}",
              iif.get_if_name_str()?,
              iif.get_att_node()?.get_name()?);
@@ -245,12 +252,15 @@ pub fn process_arp_broadcast_request(node: &Node, iif: &Interface, ethernet_hdr_
     send_arp_reply_msg(&ethernet_hdr_in, &arp_hdr_in, iif)
 }
 
-pub fn process_arp_reply_msg(node: &mut Node, iif: &Interface, ethernet_hdr_in: &EthernetHeader, arp_hdr_in: &ARPHeader) -> Result<()> {
+pub fn process_arp_reply_msg(node: &mut Node,
+                             iif: &Interface,
+                             ethernet_hdr_in: &EthernetHeader,
+                             arp_hdr_in: &ARPHeader) -> Result<()> {
     println!("ARP reply msg recvd on interface {} of node {}",
              iif.get_if_name_str()?,
              iif.get_att_node()?.get_name()?);
 
-    let arp_table = node.get_arp_table();
+    let mut arp_table = node.get_arp_table();
     arp_table.update_from_arp_reply(arp_hdr_in, iif);
 
     Ok(())

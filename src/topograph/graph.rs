@@ -1,23 +1,21 @@
 use std::alloc::{alloc, Layout};
-use std::net::{ SocketAddr};
+use std::cell::{RefCell, RefMut};
+use std::fmt::format;
+use std::net::SocketAddr;
 use std::sync::atomic::{AtomicPtr, Ordering};
 use std::thread;
 use std::time::Duration;
+
 use memoffset::offset_of;
-use mio::{net::UdpSocket, Events, Interest, Poll, Token};
+use mio::{Events, Interest, net::UdpSocket, Poll, Token};
+
+use crate::config::*;
 use crate::data_link_layer::arp::ARPTable;
 use crate::data_link_layer::layer2_frame_recv;
+use crate::data_link_layer::switch::MACTable;
+use crate::error::{Error, Result};
 use crate::topograph::glthread::{*};
 use crate::topograph::net_util::{*};
-use crate::error::{Error, Result};
-
-
-
-pub const TOPOLOGY_NAME_SIZE: usize = 16;
-pub const NODE_NAME_SIZE: usize = 16;
-pub const IF_NAME_SIZE: usize = 16;
-pub const MAX_INTF_PER_NODE: usize = 10;
-pub const MAX_PACKET_BUFFER_SIZE: usize = 1024;
 
 #[repr(C)]
 pub struct Graph {
@@ -44,7 +42,7 @@ impl Graph {
 
     pub fn add_node(&mut self, node_name: &[u8; NODE_NAME_SIZE]) -> *mut Node{
         let new_node = Node::new(node_name);
-        unsafe{
+        unsafe {
             let curr_glthread = &self.node_list as *const _ as *mut GLThread;
             let new_glthread = &(*new_node).graph_glue as *const _ as *mut GLThread;
             glthread_add_next(curr_glthread, new_glthread);
@@ -73,7 +71,7 @@ impl Graph {
             intf_props: InterfaceProperty::init(),
         });
         let if_des = Box::into_raw(boxed_if_des);
-        let boxed_link = Box::new(Link{
+        let boxed_link = Box::new(Link {
             if_src,
             if_des,
             cost,
@@ -84,18 +82,17 @@ impl Graph {
             (*if_des).link = link;
             (*if_src).set_mac_address();
             (*if_des).set_mac_address();
-            if let Some(index) = (*node_src).get_node_intf_available_slot(){
+            if let Some(index) = (*node_src).get_node_intf_available_slot() {
                 (*node_src).interfaces[index] = if_src;
             }
-            if let Some(index) = (*node_des).get_node_intf_available_slot(){
+            if let Some(index) = (*node_des).get_node_intf_available_slot() {
                 (*node_des).interfaces[index] = if_des;
             }
         }
-
     }
 
     #[inline]
-    pub  fn get_node_by_node_name(&self, node_name: &[u8; NODE_NAME_SIZE]) -> *mut Node {
+    pub fn get_node_by_node_name(&self, node_name: &[u8; NODE_NAME_SIZE]) -> *mut Node {
         let base = &self.node_list.right as *const _ as *mut GLThread;
 
         while !base.is_null() {
@@ -109,56 +106,55 @@ impl Graph {
         std::ptr::null_mut()
     }
 
-    pub fn start_pkt_receiver_thread(&self){
+    pub fn start_pkt_receiver_thread(&self) {
         let base = AtomicPtr::from(self.node_list.right);
-        thread::spawn( move || {
-              let mut poll = Poll::new().unwrap();
-              let mut events = Events::with_capacity(128);
-              let registry = poll.registry();
-              let mut node_list = vec![];
-              let mut glthread = base.into_inner();
-              unsafe {
-                  let mut i = 0;
-                  while ! glthread.is_null() {
-                      let node = graph_glue_to_node(glthread);
-                      if (*node).udp_sock.is_some() {
-                          let socket = &mut *(*node).udp_sock.as_mut().unwrap();
-                          node_list.push(node);
-                          registry.register(socket,
-                                            Token(i),
-                                            Interest::READABLE).unwrap();
-                          i += 1;
-                      }
-                      glthread = (*glthread).right;
-                  }
-              }
-                loop {
-                    poll.poll(&mut events, None);
-                    for event in events.iter() {
-                        let mut buf = vec![0;1024];
-                        unsafe {
-                            if let Ok(size) = (*node_list[event.token().0]).udp_sock.as_ref().unwrap().recv(&mut buf) {
-                                (*node_list[event.token().0]).pkt_receive(&buf, size);
-                                let socket = (*node_list[event.token().0]).udp_sock.as_mut().unwrap();
-                                poll.registry().reregister(socket, event.token(), Interest::READABLE);
-                            }
+        thread::spawn(move || {
+            let mut poll = Poll::new().unwrap();
+            let mut events = Events::with_capacity(128);
+            let registry = poll.registry();
+            let mut node_list = vec![];
+            let mut glthread = base.into_inner();
+            unsafe {
+                let mut i = 0;
+                while !glthread.is_null() {
+                    let node = graph_glue_to_node(glthread);
+                    if (*node).udp_sock.is_some() {
+                        let socket = &mut *(*node).udp_sock.as_mut().unwrap();
+                        node_list.push(node);
+                        registry.register(socket,
+                                          Token(i),
+                                          Interest::READABLE).unwrap();
+                        i += 1;
+                    }
+                    glthread = (*glthread).right;
+                }
+            }
+            loop {
+                poll.poll(&mut events, None);
+                for event in events.iter() {
+                    let mut buf = vec![0; 1024];
+                    unsafe {
+                        if let Ok(size) = (*node_list[event.token().0]).udp_sock.as_ref().unwrap().recv(&mut buf) {
+                            (*node_list[event.token().0]).pkt_receive(&buf, size);
+                            let socket = (*node_list[event.token().0]).udp_sock.as_mut().unwrap();
+                            poll.registry().reregister(socket, event.token(), Interest::READABLE);
                         }
                     }
                 }
-            });
+            }
+        });
     }
 
     pub fn dump_graph(&self) {
         let mut base = self.node_list.right;
         while !base.is_null() {
-            unsafe{
+            unsafe {
                 let node = graph_glue_to_node(base);
                 (*node).dump_node();
                 base = (*base).right;
             }
         }
     }
-
 }
 
 #[repr(C)]
@@ -166,12 +162,12 @@ pub struct Interface {
     if_name: [u8; IF_NAME_SIZE],
     att_node: *mut Node,
     link: *mut Link,
-    intf_props:InterfaceProperty,
+    intf_props: InterfaceProperty,
 }
 
 impl Interface {
     #[inline]
-    pub fn get_nbr_node(&self) ->  Result<&Node> {
+    pub fn get_nbr_node(&self) -> Result<&Node> {
         unsafe {
             if !self.link.is_null() {
                 match std::ptr::eq(self, (*self.link).if_src) {
@@ -183,15 +179,29 @@ impl Interface {
         Err(Error::NeighborNodeNotFound)
     }
 
-    pub fn get_att_node(&self) -> Result<&Node> {
+    pub fn get_att_node(&self) -> Result<&mut Node> {
         if self.att_node.is_null() {
             return Err(Error::InterfaceNotAttNode);
-        }
-        else{
-            unsafe{return Ok(&*self.att_node);}
+        } else {
+            unsafe { return Ok(&mut *self.att_node); }
         }
     }
 
+    pub fn get_property(&mut self) -> &mut InterfaceProperty{
+        &mut self.intf_props
+    }
+
+    #[inline]
+    pub fn get_ip_address(&self) -> IP {
+        self.intf_props.get_ip()
+    }
+
+    #[inline]
+    pub fn get_mac_address(&self) -> MAC {
+        self.intf_props.get_mac()
+    }
+
+    #[inline]
     pub fn get_if_name(&self) -> [u8; IF_NAME_SIZE] {
         self.if_name
     }
@@ -208,10 +218,11 @@ impl Interface {
 
     #[inline]
     pub fn l2_mode(&self) -> &InterfaceMode {
-        self.intf_props.interface_mode()
+        self.intf_props.get_interface_mode()
     }
+
     pub fn set_mac_address(&mut self) {
-        if self.att_node.is_null() {return;}
+        if self.att_node.is_null() { return; }
         let mut hash_code_val = 0;
         unsafe {
             hash_code_val = hash_code(&(*self.att_node).node_name, NODE_NAME_SIZE);
@@ -220,21 +231,16 @@ impl Interface {
         self.intf_props.set_interface_mac_address(hash_code_to_mac(hash_code_val));
     }
 
-    #[inline]
-    pub fn get_mac_address(&self) -> MAC{
-        self.intf_props.get_mac()
+    pub fn set_interface_mod(&mut self, mode: InterfaceMode) {
+        self.intf_props.set_interface_mod(mode);
     }
 
     pub fn set_ip_address(&mut self, ip: IP, mask: u8) {
         self.intf_props.set_interface_ip_address(ip, mask);
         self.intf_props.set_ipadd_config(true);
     }
-    #[inline]
-    pub fn get_ip_address(&self) -> IP {
-        self.intf_props.get_ip()
-    }
 
-    pub fn pkt_send_out(&self, data:&[u8]) -> Result<()>{
+    pub fn pkt_send_out(&self, data: &[u8]) -> Result<()> {
         unsafe {
             let nbr_node = self.get_nbr_node()?;
             let des_port_number = nbr_node.udp_port_number;
@@ -277,7 +283,7 @@ impl Node{
             std::ptr::write(&mut node.node_name, *node_name);
             std::ptr::write(&mut node.interfaces, [std::ptr::null_mut(); MAX_INTF_PER_NODE]);
             std::ptr::write(&mut node.graph_glue,
-                            GLThread{ left: std::ptr::null_mut(), right: std::ptr::null_mut() });
+                            GLThread { left: std::ptr::null_mut(), right: std::ptr::null_mut() });
             std::ptr::write(&mut node.udp_port_number, 0);
             std::ptr::write(&mut node.udp_sock, None);
             std::ptr::write(&mut node.node_proprs, NetWorkNodeProperty::init());
@@ -312,7 +318,7 @@ impl Node{
     pub fn dump_node(&self) {
         println!("Node name = {}", std::str::from_utf8(&self.node_name).unwrap());
         self.node_proprs.dump();
-        unsafe{
+        unsafe {
             for i in 0..MAX_INTF_PER_NODE {
                 if self.interfaces[i].is_null() { break; }
                 let intf = self.interfaces[i];
@@ -327,15 +333,18 @@ impl Node{
     }
 
     #[inline]
-    pub fn get_arp_table(&mut self) -> &mut ARPTable{
+    pub fn get_arp_table(&self) -> RefMut<ARPTable> {
         self.node_proprs.get_arp_table()
     }
 
     #[inline]
+    pub fn get_mac_lable(&self) -> RefMut<MACTable> {
+        self.node_proprs.get_mac_table()
+    }
+    #[inline]
     pub fn set_loopback_address(&mut self, ip: IP) {
         self.node_proprs.set_loopback_address(ip);
         self.node_proprs.lb_addr_config(true);
-
     }
 
     pub fn set_intf_ip_address(&mut self,  if_name: &[u8; IF_NAME_SIZE], ip: IP, mask: u8) {
@@ -345,16 +354,41 @@ impl Node{
         }
     }
 
+    pub fn set_l2_mode(&mut self, if_name: &[u8; IF_NAME_SIZE], mode: InterfaceMode) -> Result<()> {
+        unsafe {
+            let intf = self.get_node_if_by_name(if_name);
+            if !intf.is_null() {
+                if (*intf).is_l3_mode() {
+                    return Err(Error::InterfaceModeError(
+                        format!("Interface {} is on l3 mode.", (*intf).get_if_name_str()?)));
+                }
+                (*intf).get_property().set_interface_mod(mode);
+            } else {
+                return Err(Error::InterfaceNotFound);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn set_interfaces_mode(&self, mode: InterfaceMode) {
+        for intf in self.interfaces {
+            if intf.is_null() {break;}
+            unsafe{
+                (*intf).set_interface_mod(mode);
+            }
+        }
+    }
+
     pub fn get_matching_subnet_interface<'i>(&'i self, ip: IP) -> Option<&'i Interface> {
         for i in 0..MAX_INTF_PER_NODE {
             let interface = self.interfaces[i];
-            if interface.is_null(){break;}
+            if interface.is_null() { break; }
 
-            unsafe{
-                if !(*interface).intf_props.is_l3_mode() {continue;}
+            unsafe {
+                if !(*interface).intf_props.is_l3_mode() { continue; }
                 let mask = (*interface).intf_props.get_mask();
                 let network_number = apply_mask(ip, mask);
-                if network_number == apply_mask((*interface).intf_props.get_ip(), mask){
+                if network_number == apply_mask((*interface).intf_props.get_ip(), mask) {
                     return Some(&*interface);
                 }
             }
@@ -364,17 +398,29 @@ impl Node{
 
     pub fn init_udp_sock(&mut self, udp_port_number: usize) -> Result<()> {
         self.udp_port_number = udp_port_number;
-        let addr = format!("{}:{}",self.node_proprs.get_loopback_address(),
+        let addr = format!("{}:{}", self.node_proprs.get_loopback_address(),
                            udp_port_number);
         let udp_sock = UdpSocket::bind(addr.parse()?)?;
         self.udp_sock = Some(udp_sock);
         Ok(())
     }
 
-    pub fn send_pkt_flood(&self, pkt_data: &[u8]) -> Result<()> {
+    pub fn send_pkt_out(&self, if_name:&[u8; IF_NAME_SIZE], pkt_data: &[u8]) -> Result<()> {
+        unsafe{
+            let index = self.interfaces.into_iter()
+                .position(|intf| (*intf).get_if_name().eq(if_name));
+            if index.is_some() {
+                (*self.interfaces[index.unwrap()]).pkt_send_out(pkt_data)?;
+            }
+        }
+        Ok(())
+    }
+
+    pub fn send_pkt_flood(&self, pkt_data: &[u8], exempted_intf: &Interface) -> Result<()> {
         for i in 0..MAX_INTF_PER_NODE {
-            if self.interfaces[i].is_null() {break;}
+            if self.interfaces[i].is_null() { break; }
             unsafe {
+                if std::ptr::eq(self.interfaces[i], exempted_intf) { continue; }
                 (*self.interfaces[i]).pkt_send_out(pkt_data)?;
             }
         }
@@ -392,7 +438,7 @@ impl Node{
         let interface = self.get_node_if_by_name(&if_name);
         if !interface.is_null() {
             let data = buf[IF_NAME_SIZE..size].to_owned();
-            unsafe{
+            unsafe {
                 layer2_frame_recv(self, &*interface, &data)?;
             }
         }
@@ -405,8 +451,8 @@ impl Node{
 pub unsafe fn get_nbr_node(interface: *mut Interface) -> *mut Node {
     if !(*interface).link.is_null() {
         match (*(*interface).link).if_src == interface {
-            true => {return (*(*(*interface).link).if_des).att_node;},
-            false => {return (*(*(*interface).link).if_src).att_node;},
+            true => { return (*(*(*interface).link).if_des).att_node; }
+            false => { return (*(*(*interface).link).if_src).att_node; }
         }
     }
     std::ptr::null_mut()
@@ -424,7 +470,9 @@ pub unsafe fn graph_glue_to_node(glthread: *mut GLThread) -> *mut Node {
 mod test {
     use std::borrow::{Borrow, BorrowMut};
     use std::thread::sleep;
+
     use mio::net::{TcpListener, TcpStream};
+
     use super::*;
 
     #[test]
@@ -432,7 +480,7 @@ mod test {
         let name = b"testtesttestestt";
         let node = Node::new(name);
         unsafe {
-            let gp = &(*node).graph_glue as * const _ as *mut GLThread;
+            let gp = &(*node).graph_glue as *const _ as *mut GLThread;
             let res = graph_glue_to_node(gp);
             assert_eq!(*name, (*res).node_name);
         }
@@ -483,13 +531,11 @@ mod test {
             for i in 0..10 {
                 let data = b"12";
 
-                (*node1).send_pkt_flood(data);
+                //(*node1).send_pkt_flood(data);
                 sleep(Duration::from_millis(100));
             }
-
         }
         Ok(())
         //graph.dump_graph();
     }
-
 }

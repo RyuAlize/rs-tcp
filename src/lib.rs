@@ -1,10 +1,10 @@
-#![feature(in_band_lifetimes)]
 #![feature(linked_list_remove)]
 
 mod error;
-mod topograph;
-mod data_link_layer;
+pub mod topograph;
+pub mod data_link_layer;
 mod packet;
+mod config;
 
 
 #[cfg(test)]
