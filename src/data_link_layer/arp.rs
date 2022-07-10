@@ -30,45 +30,34 @@ pub struct ARPHeader {
     des_ip: IP,
 }
 
-impl ToBytes for ARPHeader {
-    fn to_bytes(self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&self.hw_type.to_be_bytes());
-        bytes.extend_from_slice(&self.proto_type.to_be_bytes());
-        bytes.extend_from_slice(&self.hw_addr_len.to_be_bytes());
-        bytes.extend_from_slice(&self.proto_addr_type.to_be_bytes());
-        bytes.extend_from_slice(&self.op_code.to_be_bytes());
-        bytes.extend_from_slice(&self.src_mac.0);
-        bytes.extend_from_slice(&self.src_ip.0);
-        bytes.extend_from_slice(&self.des_mac.0);
-        bytes.extend_from_slice(&self.des_ip.0);
-
-        bytes
-    }
-}
 
 impl ARPHeader {
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let (bytes, hw_type) = take2(bytes).unwrap();
-        let (bytes, proto_type) = take2(bytes).unwrap();
-        let (bytes, hw_addr_len) = take1(bytes).unwrap();
-        let (bytes, proto_addr_type) = take1(bytes).unwrap();
-        let (bytes, op_code) = take2(bytes).unwrap();
-        let (bytes, src_mac) = take6(bytes).unwrap();
-        let (bytes, src_ip) = take4(bytes).unwrap();
-        let (bytes, dst_mac) = take6(bytes).unwrap();
-        let (bytes, dst_ip) = take4(bytes).unwrap();
+    pub fn from_bytes(mut bytes: BytesMut) -> Result<Self> {
         Ok(Self {
-            hw_type: u16::from_be_bytes(hw_type.try_into().unwrap()),
-            proto_type: u16::from_be_bytes(proto_type.try_into().unwrap()),
-            hw_addr_len: u8::from_be_bytes(hw_addr_len.try_into().unwrap()),
-            proto_addr_type: u8::from_be_bytes(proto_addr_type.try_into().unwrap()),
-            op_code: u16::from_be_bytes(op_code.try_into().unwrap()),
-            src_mac: MAC(src_mac.try_into().unwrap()),
-            src_ip: IP(src_ip.try_into().unwrap()),
-            des_mac: MAC(dst_mac.try_into().unwrap()),
-            des_ip: IP(dst_ip.try_into().unwrap()),
+            hw_type: bytes.get_u16(),
+            proto_type: bytes.get_u16(),
+            hw_addr_len: bytes.get_u8(),
+            proto_addr_type: bytes.get_u8(),
+            op_code: bytes.get_u16(),
+            src_mac: MAC((&bytes.copy_to_bytes(6)[..]).try_into().unwrap()),
+            src_ip: IP((&bytes.copy_to_bytes(4)[..]).try_into().unwrap()),
+            des_mac: MAC((&bytes.copy_to_bytes(6)[..]).try_into().unwrap()),
+            des_ip: IP((&bytes.copy_to_bytes(4)[..]).try_into().unwrap()),
         })
+    }
+
+    pub fn to_bytes(mut self) -> BytesMut {
+        let mut bytes = BytesMut::new();
+        bytes.put_slice(&self.hw_type.to_be_bytes());
+        bytes.put_slice(&self.proto_type.to_be_bytes());
+        bytes.put_slice(&self.hw_addr_len.to_be_bytes());
+        bytes.put_slice(&self.proto_addr_type.to_be_bytes());
+        bytes.put_slice(&self.op_code.to_be_bytes());
+        bytes.put_slice(&self.src_mac.0);
+        bytes.put_slice(&self.src_ip.0);
+        bytes.put_slice(&self.des_mac.0);
+        bytes.put_slice(&self.des_ip.0);
+        bytes
     }
 
     #[inline]
@@ -200,7 +189,7 @@ pub fn send_arp_broadcast_request(node: &Node, ip: IP) -> Result<()> {
                         des_mac: Default::default(),
                         des_ip: ip
                     };
-                    ethernet_header.set_payload(arp_hdr.to_bytes());
+                    ethernet_header.set_payload(arp_hdr.to_bytes().to_vec());
 
                     interface.pkt_send_out(&ethernet_header.to_bytes())
                 }
@@ -229,7 +218,7 @@ pub fn send_arp_reply_msg(ethernet_hdr_in: &EthernetHeader,
     ethernet_hdr_reply.set_type(ARP_MSG);
     ethernet_hdr_reply.set_des_mac(arp_hdr_in.src_mac);
     ethernet_hdr_reply.set_src_mac(oif.get_mac_address());
-    ethernet_hdr_reply.set_payload(arp_hdr_reply.to_bytes());
+    ethernet_hdr_reply.set_payload(arp_hdr_reply.to_bytes().to_vec());
     oif.pkt_send_out(&ethernet_hdr_reply.to_bytes())
 }
 

@@ -1,4 +1,7 @@
 #![feature(linked_list_remove)]
+#![feature(slice_take)]
+
+extern crate core;
 
 mod error;
 pub mod topograph;

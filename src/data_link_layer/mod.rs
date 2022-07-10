@@ -1,6 +1,4 @@
-use nom::{bytes::complete::take, Err, IResult};
-use nom::character::complete::u32;
-
+use bytes::{Buf, BufMut, BytesMut};
 use arp::*;
 use switch::*;
 
@@ -13,10 +11,7 @@ use crate::topograph::{
 
 pub mod arp;
 pub mod switch;
-
-pub trait ToBytes {
-    fn to_bytes(self) -> Vec<u8>;
-}
+pub mod vlan;
 
 #[derive(Default, Debug)]
 pub struct EthernetHeader {
@@ -27,56 +22,30 @@ pub struct EthernetHeader {
     FCS: u32,
 }
 
-impl ToBytes for EthernetHeader {
-    fn to_bytes(mut self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        bytes.extend_from_slice(&self.dst_mac.0);
-        bytes.extend_from_slice(&self.src_mac.0);
-        bytes.extend_from_slice(&self.eth_type.to_be_bytes());
-        bytes.extend_from_slice(&self.payload);
-        bytes.extend_from_slice(&self.FCS.to_be_bytes());
 
-        bytes
-    }
-}
-
-fn take6(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    take(6u8)(input)
-}
-
-fn take4(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    take(4u8)(input)
-}
-
-fn take2(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    take(2u8)(input)
-}
-
-fn take1(input: &[u8]) -> IResult<&[u8], &[u8]> {
-    take(1u8)(input)
-}
-
-fn take_payload(len: usize, input: &[u8]) -> IResult<&[u8], &[u8]> {
-    take(len)(input)
-}
 
 
 impl EthernetHeader {
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
-        let len = bytes.len();
-        let (bytes, dst_mac) = take6(bytes).unwrap();
-        let (bytes, src_mac) = take6(bytes).unwrap();
-        let (bytes, eth_type) = take2(bytes).unwrap();
-        let (bytes, payload) = take_payload(len - 18, bytes).unwrap();
-        let (bytes, FCS) = take4(bytes).unwrap();
+    pub fn from_bytes(mut bytes: BytesMut) -> Result<Self> {
+        let payload_len = bytes.len() - 18;
         let hdr = EthernetHeader {
-            dst_mac: MAC(dst_mac.try_into().unwrap()),
-            src_mac: MAC(src_mac.try_into().unwrap()),
-            eth_type: u16::from_be_bytes(eth_type.try_into().unwrap()),
-            payload: payload.to_vec(),
-            FCS: u32::from_be_bytes(FCS.try_into().unwrap()),
+            dst_mac: MAC((&bytes.copy_to_bytes(6)[..]).try_into().unwrap()),
+            src_mac: MAC((&bytes.copy_to_bytes(6)[..]).try_into().unwrap()),
+            eth_type: bytes.get_u16(),
+            payload: bytes.copy_to_bytes(payload_len).to_vec(),
+            FCS: bytes.get_u32(),
         };
         Ok(hdr)
+    }
+
+    fn to_bytes(mut self) -> BytesMut {
+        let mut bytes = BytesMut::new();
+        bytes.put_slice(&self.dst_mac.0);
+        bytes.put_slice(&self.src_mac.0);
+        bytes.put_slice(&self.eth_type.to_be_bytes());
+        bytes.put_slice(&self.payload.as_slice());
+        bytes.put_slice(&self.FCS.to_be_bytes());
+        bytes
     }
     #[inline]
     pub fn set_des_mac(&mut self, mac: MAC) {
@@ -105,14 +74,14 @@ impl EthernetHeader {
 
 
 pub fn layer2_frame_recv(node: &mut Node, interface: &Interface, pkt: &[u8]) -> Result<()> {
-    let ethernet_hdr = EthernetHeader::from_bytes(pkt)?;
+    let ethernet_hdr = EthernetHeader::from_bytes(BytesMut::from(pkt))?;
     match l2_frame_recv_qualify_on_interface(interface, &ethernet_hdr) {
         true => {
             println!("L2 Frame Accepted.");
             if interface.is_l3_mode() {
                 match ethernet_hdr.eth_type {
                     ARP_MSG => {
-                        let arp_hdr = ARPHeader::from_bytes(&ethernet_hdr.payload)?;
+                        let arp_hdr = ARPHeader::from_bytes(BytesMut::from(ethernet_hdr.payload.as_slice()))?;
                         match arp_hdr.op_code() {
                             ARP_BROAD_REQ => {
                                 process_arp_broadcast_request(node,
@@ -184,7 +153,7 @@ mod test {
         };
         let bytes = ethernet_hdr.to_bytes();
         println!("{:?}", bytes);
-        let hdr = EthernetHeader::from_bytes(&bytes)?;
+        let hdr = EthernetHeader::from_bytes(bytes)?;
         println!("{:?}", hdr);
         Ok(())
     }

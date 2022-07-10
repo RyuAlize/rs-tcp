@@ -63,7 +63,7 @@ pub fn switch_perform_mac_learning(node: &mut Node,
 }
 
 pub fn switch_forward_frame(node: &Node, pkt: &[u8], recv_intf: &Interface) -> Result<()> {
-    let ethernet_hdr = EthernetHeader::from_bytes(pkt)?;
+    let ethernet_hdr = EthernetHeader::from_bytes(BytesMut::from(pkt))?;
     if ethernet_hdr.is_broadcast_mac() {
         return node.send_pkt_flood(pkt, recv_intf);
     } else if let Some(entry) = node.get_mac_lable().lookup(&ethernet_hdr.dst_mac) {
@@ -82,7 +82,7 @@ pub fn switch_forward_frame(node: &Node, pkt: &[u8], recv_intf: &Interface) -> R
 
 pub fn switch_recv_frame(interface: &Interface, pkt: &[u8]) -> Result<()> {
     let node = interface.get_att_node()?;
-    let ethernet_hdr = EthernetHeader::from_bytes(pkt)?;
+    let ethernet_hdr = EthernetHeader::from_bytes(BytesMut::from(pkt))?;
     switch_perform_mac_learning(node, ethernet_hdr.src_mac, interface.get_if_name())?;
     switch_forward_frame(node, pkt, interface)
 }
