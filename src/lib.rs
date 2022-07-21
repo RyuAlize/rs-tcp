@@ -6,6 +6,7 @@ extern crate core;
 mod error;
 pub mod topograph;
 pub mod data_link_layer;
+pub mod ip_layer;
 mod packet;
 mod config;
 

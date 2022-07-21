@@ -11,7 +11,6 @@ use crate::topograph::{
 
 pub mod arp;
 pub mod switch;
-pub mod vlan;
 
 #[derive(Default, Debug)]
 pub struct EthernetHeader {
@@ -98,7 +97,8 @@ pub fn layer2_frame_recv(node: &mut Node, interface: &Interface, pkt: &[u8]) -> 
                             _ => unreachable!()
                         }
                     }
-                    _ => unreachable!(),
+                    ETH_IP => {println!("promote to l3.")},
+                    _ => {}
                 }
             } else {
                 match interface.l2_mode() {
@@ -256,8 +256,6 @@ mod test {
             eth2.set_src_mac((*intf3).get_mac_address());
             eth2.set_payload(vec![1,2,3]);
 
-            send_arp_broadcast_request(&(*node1), IP([192, 168, 0, 11]))?;
-
             (*node1).send_pkt_out(&(*intf1).get_if_name(), &eth1.to_bytes())?;
             (*node3).send_pkt_out(&(*intf3).get_if_name(), &eth2.to_bytes())?;
             sleep(Duration::from_millis(3000));
@@ -265,8 +263,5 @@ mod test {
 
             Ok(())
         }
-
-
-
     }
 }

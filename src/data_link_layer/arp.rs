@@ -8,22 +8,20 @@ use crate::error::{Error, Result};
 
 use super::*;
 
-pub const ARP_BROAD_REQ: u16 = 1;
-pub const ARP_REPLY: u16 = 2;
-pub const ARP_MSG: u16 = 809;
+
 
 #[derive(Debug)]
 pub struct ARPHeader {
-    hw_type: u16,
     /*1 for ethernet cable*/
-    proto_type: u16,
+    hw_type: u16,
     /*0x0800 for IPV4*/
-    hw_addr_len: u8,
+    proto_type: u16,
     /*6 for MAC*/
-    proto_addr_type: u8,
+    hw_addr_len: u8,
     /*4 for IPV4*/
-    op_code: u16,
+    proto_addr_type: u8,
     /*req or reply*/
+    op_code: u16,
     src_mac: MAC,
     src_ip: IP,
     des_mac: MAC,
