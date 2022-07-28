@@ -113,7 +113,7 @@ impl ARPTable {
         self.arp_entries.iter().find(|&entry| entry.ip_addr.eq(&ip))
     }
 
-    pub fn clear(&mut self, ip: IP) {
+    pub fn clear(&mut self) {
         self.arp_entries.clear();
     }
 

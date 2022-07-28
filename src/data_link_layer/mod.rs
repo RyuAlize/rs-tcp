@@ -1,3 +1,4 @@
+use std::any::Any;
 use bytes::{Buf, BufMut, BytesMut};
 use arp::*;
 use switch::*;
@@ -8,6 +9,7 @@ use crate::topograph::{
     graph::*,
     net_util::*,
 };
+use crate::ip_layer::promote_pkt_to_layer3;
 
 pub mod arp;
 pub mod switch;
@@ -80,7 +82,8 @@ pub fn layer2_frame_recv(node: &mut Node, interface: &Interface, pkt: &[u8]) -> 
             if interface.is_l3_mode() {
                 match ethernet_hdr.eth_type {
                     ARP_MSG => {
-                        let arp_hdr = ARPHeader::from_bytes(BytesMut::from(ethernet_hdr.payload.as_slice()))?;
+                        let arp_hdr = ARPHeader::from_bytes(
+                            BytesMut::from(ethernet_hdr.payload.as_slice()))?;
                         match arp_hdr.op_code() {
                             ARP_BROAD_REQ => {
                                 process_arp_broadcast_request(node,
@@ -97,7 +100,10 @@ pub fn layer2_frame_recv(node: &mut Node, interface: &Interface, pkt: &[u8]) -> 
                             _ => unreachable!()
                         }
                     }
-                    ETH_IP => {println!("promote to l3.")},
+                    ETH_IP => promote_pkt_to_layer3(node,
+                                                      interface,
+                                                     ethernet_hdr.payload.as_slice(),
+                                                     ethernet_hdr.eth_type),
                     _ => {}
                 }
             } else {
